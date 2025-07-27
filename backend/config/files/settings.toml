@@ -1,0 +1,39 @@
+[default]
+# Default configuration values
+debug = false
+log_level = "INFO"
+
+# Central tenant database
+[default.central_db]
+host = "localhost"
+port = 5432
+database = "central_tenant_db"
+username = "postgres"
+password = "password"
+connection_string = "postgresql://postgres:password@localhost:5432/central_tenant_db"
+
+# External services
+[default.pinecone]
+api_key = "your-pinecone-api-key"
+environment = "us-east-1-aws"
+
+[default.azure]
+service_bus_connection_string = "your-service-bus-connection"
+storage_connection_string = "your-storage-connection"
+
+# Service configurations
+[default.services.document_service]
+port = 8001
+host = "0.0.0.0"
+
+[default.services.project_service]
+port = 8002
+host = "0.0.0.0"
+
+[default.services.identity_service]
+port = 8003
+host = "0.0.0.0"
+
+[default.services.blob_service]
+port = 8004
+host = "0.0.0.0" 

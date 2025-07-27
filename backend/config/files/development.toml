@@ -1,0 +1,41 @@
+[development]
+# Development environment overrides
+debug = true
+log_level = "DEBUG"
+
+# Central tenant database
+[development.central_db]
+host = "localhost"
+port = 5432
+database = "central_tenant_db"
+username = "postgres"
+password = "postgres"
+connection_string = "postgresql://postgres:postgres@localhost:5432/central_tenant_db"
+
+# Tenant database configuration
+[development.tenant_db]
+host = "localhost"
+port = 5432
+username = "postgres"
+password = "postgres"
+database_prefix = "tenant_"
+database_suffix = "_db"
+
+# External services
+[development.pinecone]
+api_key = "your-pinecone-api-key-here"
+region = "us-east-1-aws"
+
+[development.azure]
+service_bus_connection_string = "dev-service-bus-connection"
+storage_connection_string = "dev-storage-connection"
+
+[development.auth0]
+domain = "dev-5w5l8ake23bk7o4h.us.auth0.com"
+audience = "https://legal-analyzer"
+issuer = "https://dev-5w5l8ake23bk7o4h.us.auth0.com/"
+client_id = "your-client-id"
+client_secret = "your-client-secret"
+
+[development.api]
+auth0_webhook_key = "2ET1TpRKjEPd60cGgnN!" 

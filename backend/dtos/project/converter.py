@@ -1,0 +1,81 @@
+from typing import List
+from models.tenant import Project
+from .create_project import CreateProjectRequest, CreateProjectResponse
+from .get_project import GetProjectResponse
+from .update_project import UpdateProjectRequest, UpdateProjectResponse
+
+class ProjectConverter:
+    """Static class for converting between Project entities and DTOs"""
+    
+    @staticmethod
+    def to_create_response(project: Project) -> CreateProjectResponse:
+        """Convert Project entity to CreateProjectResponse"""
+        return CreateProjectResponse(
+            id=project.id,
+            name=project.name,
+            description=project.description,
+            document_start_date=project.document_start_date,
+            document_end_date=project.document_end_date,
+            tenant_id=project.tenant_id,
+            created_at=project.created_at.isoformat() if project.created_at else None,
+            created_by=project.created_by,
+            updated_at=project.updated_at.isoformat() if project.updated_at else None,
+            updated_by=project.updated_by
+        )
+    
+    @staticmethod
+    def to_get_response(project: Project) -> GetProjectResponse:
+        """Convert Project entity to GetProjectResponse"""
+        return GetProjectResponse(
+            id=project.id,
+            name=project.name,
+            description=project.description,
+            document_start_date=project.document_start_date,
+            document_end_date=project.document_end_date,
+            tenant_id=project.tenant_id,
+            created_at=project.created_at.isoformat() if project.created_at else None,
+            created_by=project.created_by,
+            updated_at=project.updated_at.isoformat() if project.updated_at else None,
+            updated_by=project.updated_by
+        )
+    
+    @staticmethod
+    def to_update_response(project: Project) -> UpdateProjectResponse:
+        """Convert Project entity to UpdateProjectResponse"""
+        return UpdateProjectResponse(
+            id=project.id,
+            name=project.name,
+            description=project.description,
+            document_start_date=project.document_start_date,
+            document_end_date=project.document_end_date,
+            tenant_id=project.tenant_id,
+            created_at=project.created_at.isoformat() if project.created_at else None,
+            created_by=project.created_by,
+            updated_at=project.updated_at.isoformat() if project.updated_at else None,
+            updated_by=project.updated_by
+        )
+    
+    @staticmethod
+    def to_get_response_list(projects: List[Project]) -> List[GetProjectResponse]:
+        """Convert list of Project entities to list of GetProjectResponse"""
+        return [ProjectConverter.to_get_response(project) for project in projects]
+    
+    @staticmethod
+    def from_create_request(request: CreateProjectRequest, tenant_id: int) -> Project:
+        """Convert CreateProjectRequest to Project entity"""
+        return Project(
+            name=request.name,
+            description=request.description,
+            document_start_date=request.document_start_date,
+            document_end_date=request.document_end_date,
+            tenant_id=tenant_id
+        )
+    
+    @staticmethod
+    def from_update_request(project: Project, request: UpdateProjectRequest) -> Project:
+        """Update existing Project entity with UpdateProjectRequest data"""
+        project.name = request.name
+        project.description = request.description
+        project.document_start_date = request.document_start_date
+        project.document_end_date = request.document_end_date
+        return project 

@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  # Central Database (Tenant metadata)
+  central-db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: central_tenant_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5432:5432"
+    volumes:
+      - central_db_data:/var/lib/postgresql/data
+    networks:
+      - lda-network
+
+  # Redis for caching
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - lda-network
+
+  # Azure Storage Emulator (Azurite)
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite
+    ports:
+      - "10000:10000"  # Blob
+      - "10001:10001"  # Queue
+      - "10002:10002"  # Table
+    networks:
+      - lda-network
+
+volumes:
+  central_db_data:
+
+networks:
+  lda-network:
+    driver: bridge 
