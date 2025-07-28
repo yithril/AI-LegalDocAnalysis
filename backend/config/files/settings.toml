@@ -15,11 +15,22 @@ connection_string = "postgresql://postgres:password@localhost:5432/central_tenan
 # External services
 [default.pinecone]
 api_key = "your-pinecone-api-key"
-environment = "us-east-1-aws"
+environment = "us-east-1"
+
+[default.pinecone.indexes]
+gazdecki-consortium = "tenant-gazdecki-consortium"
 
 [default.azure]
 service_bus_connection_string = "your-service-bus-connection"
 storage_connection_string = "your-storage-connection"
+tenant_id = "your-azure-tenant-id"
+client_id = "your-azure-client-id"
+certificate_path = "path/to/your/certificate.pem"
+default_storage_account = "your-default-storage-account"
+
+[default.azure.storage_accounts]
+# Add tenant-specific storage accounts here
+# example_tenant = "example-storage-account"
 
 # Service configurations
 [default.services.document_service]

@@ -8,8 +8,8 @@ class CreateTenantRequest(BaseModel):
     slug: str = Field(
         ..., 
         min_length=3, 
-        max_length=50,
-        description="Unique tenant identifier (lowercase letters, numbers, hyphens only)"
+        max_length=20,
+        description="Unique tenant identifier (3-20 chars, lowercase letters, numbers, hyphens, underscores)"
     )
     name: str = Field(
         ..., 
@@ -45,17 +45,26 @@ class CreateTenantRequest(BaseModel):
     @field_validator('slug')
     @classmethod
     def validate_slug(cls, v: str) -> str:
-        """Validate slug format: lowercase letters, numbers, hyphens only"""
-        if not re.match(r'^[a-z0-9-]+$', v):
-            raise ValueError('Slug must contain only lowercase letters, numbers, and hyphens')
+        """Validate slug format: 3-20 chars, lowercase letters, numbers, hyphens, underscores"""
+        v = v.strip().lower()
         
-        # Ensure it doesn't start or end with hyphen
-        if v.startswith('-') or v.endswith('-'):
-            raise ValueError('Slug cannot start or end with a hyphen')
+        if not re.match(r'^[a-z0-9_-]+$', v):
+            raise ValueError('Slug must contain only lowercase letters, numbers, hyphens, and underscores')
         
-        # Ensure it doesn't have consecutive hyphens
-        if '--' in v:
-            raise ValueError('Slug cannot contain consecutive hyphens')
+        # Check length (considering Azure storage name limits)
+        if len(v) > 20:
+            raise ValueError('Slug cannot be longer than 20 characters (to fit Azure storage naming)')
+        
+        if len(v) < 3:
+            raise ValueError('Slug must be at least 3 characters')
+        
+        # Ensure it doesn't start or end with hyphen or underscore
+        if v.startswith('-') or v.startswith('_') or v.endswith('-') or v.endswith('_'):
+            raise ValueError('Slug cannot start or end with hyphens or underscores')
+        
+        # Ensure it doesn't have consecutive hyphens or underscores
+        if '--' in v or '__' in v:
+            raise ValueError('Slug cannot contain consecutive hyphens or underscores')
         
         return v
     

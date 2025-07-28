@@ -7,6 +7,8 @@ from services.user_service import UserService
 from services.user_group_service import UserGroupService
 from services.project_service import ProjectService
 from services.document_service import DocumentService
+from services.blob_storage_service import BlobStorageService
+from services.text_extraction_service import TextExtractionService
 from services.infrastructure import database_provider
 
 class Container(containers.DeclarativeContainer):
@@ -72,6 +74,18 @@ class Container(containers.DeclarativeContainer):
         DocumentService,
         tenant_slug=providers.Callable(lambda: "default-tenant"),  # This will be injected per-tenant
         auth_service=authorization_service
+    )
+    
+    # Blob storage service factory (tenant-specific)
+    blob_storage_service = providers.Factory(
+        BlobStorageService,
+        tenant_slug=providers.Callable(lambda: "default-tenant")  # This will be injected per-tenant
+    )
+    
+    # Text extraction service factory (tenant-specific)
+    text_extraction_service = providers.Factory(
+        TextExtractionService,
+        tenant_slug=providers.Callable(lambda: "default-tenant")  # This will be injected per-tenant
     )
     
     def authentication_service(self):

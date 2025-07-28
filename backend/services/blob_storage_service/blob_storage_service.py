@@ -9,9 +9,9 @@ from typing import Optional, Dict, Any, AsyncGenerator
 from pathlib import Path
 from io import BytesIO
 
-from ..repositories.blob_repository import BlobRepository
-from ..models.file_types import FileType
-from common_lib import DocumentStatus
+from .repositories.blob_repository import BlobRepository
+from models.file_types import FileType
+from models.tenant.document import DocumentStatus
 
 logger = logging.getLogger(__name__)
 
@@ -141,42 +141,27 @@ class BlobStorageService:
     def _get_tenant_storage_account(self, tenant_slug: str) -> Optional[str]:
         """Get the storage account name for a specific tenant."""
         try:
-            # Import tenant service directly (not HTTP)
-            # Add tenant service to path temporarily
-            project_root = os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', '..', '..')
-            tenant_service_path = os.path.join(project_root, 'shared', 'tenant-service', 'src')
+            # For now, use a simple mapping or configuration
+            # In the future, this should query the tenant service
+            from config import settings
             
-            if tenant_service_path not in sys.path:
-                sys.path.insert(0, tenant_service_path)
-            
-            # Import tenant service
-            from tenant_service.services.tenant_service import TenantService
-            from tenant_service.repositories.tenant_repository import TenantRepository
-            from tenant_service.database import get_db
-            
-            # Change to tenant service directory to find database
-            original_cwd = os.getcwd()
-            tenant_service_dir = os.path.join(project_root, 'shared', 'tenant-service')
-            os.chdir(tenant_service_dir)
-            
-            try:
-                # Get tenant info
-                tenant_db = get_db()
-                tenant_repository = TenantRepository(tenant_db)
-                tenant_service = TenantService(tenant_repository)
-                
-                try:
-                    tenant_response = tenant_service.get_tenant_by_slug(tenant_slug)
-                    storage_account = tenant_response.blob_storage_account
+            # Check if we have a tenant-specific storage account configured
+            tenant_storage_key = f"azure.storage_accounts.{tenant_slug}"
+            if hasattr(settings, 'azure') and hasattr(settings.azure, 'storage_accounts'):
+                storage_accounts = settings.azure.storage_accounts
+                if tenant_slug in storage_accounts:
+                    storage_account = storage_accounts[tenant_slug]
                     logger.info(f"Found storage account '{storage_account}' for tenant '{tenant_slug}'")
                     return storage_account
-                except Exception as e:
-                    logger.error(f"Tenant not found: {tenant_slug} - {e}")
-                    return None
-                finally:
-                    tenant_db.close()
-            finally:
-                os.chdir(original_cwd)
+            
+            # Fallback to default storage account
+            default_storage_account = getattr(settings.azure, 'default_storage_account', None)
+            if default_storage_account:
+                logger.info(f"Using default storage account '{default_storage_account}' for tenant '{tenant_slug}'")
+                return default_storage_account
+            
+            logger.error(f"No storage account configured for tenant: {tenant_slug}")
+            return None
             
         except Exception as e:
             logger.error(f"Failed to get tenant storage account for {tenant_slug}: {e}")

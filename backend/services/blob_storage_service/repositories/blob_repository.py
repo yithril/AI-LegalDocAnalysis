@@ -13,7 +13,7 @@ from azure.storage.blob.aio import BlobServiceClient, BlobClient, ContainerClien
 from azure.storage.blob import ContentSettings
 from azure.core.exceptions import ResourceNotFoundError, ClientAuthenticationError
 
-from ..config import settings
+from config import settings
 
 logger = logging.getLogger(__name__)
 

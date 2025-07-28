@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from fastapi.responses import StreamingResponse
 from io import BytesIO
 
-from ..services.blob_storage_service import (
+from ...services.blob_storage_service import (
     BlobStorageService,
     BlobStorageServiceException,
     TenantNotFoundException,
@@ -17,30 +17,77 @@ from ..services.blob_storage_service import (
     EmptyFileException,
     InvalidStageException
 )
-from ..schemas.requests import UploadFileRequest
-from ..schemas.response import (
+from ...services.authorization_service import (
+    extract_user_id_from_jwt,
+    extract_tenant_slug_from_jwt,
+    AuthorizationService
+)
+from ...schemas.requests import UploadFileRequest
+from ...schemas.response import (
     UploadFileResponse,
     DownloadFileResponse,
     DeleteFileResponse,
     ErrorResponse
 )
-from .dependencies import get_blob_storage_service, get_current_user_info
+from ...container import Container
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/blob-storage", tags=["blob-storage"])
+class BlobStorageController:
+    """Controller for blob storage endpoints"""
+    
+    def __init__(self, container: Container):
+        self.container = container
+        self.router = APIRouter(prefix="/api/blob-storage", tags=["blob-storage"])
+        self._setup_routes()
+    
+
+    
+    def _setup_routes(self):
+        """Setup the API routes"""
+        self.router.add_api_route(
+            "/upload",
+            self.upload_file,
+            methods=["POST"],
+            response_model=UploadFileResponse,
+            status_code=201,
+            summary="Upload a file to blob storage"
+        )
+        
+        self.router.add_api_route(
+            "/download/{project_id}/{filename}",
+            self.download_file_info,
+            methods=["GET"],
+            response_model=DownloadFileResponse,
+            summary="Get file download information"
+        )
+        
+        self.router.add_api_route(
+            "/download/{project_id}/{filename}/content",
+            self.download_file_content,
+            methods=["GET"],
+            summary="Download file content"
+        )
+        
+        self.router.add_api_route(
+            "/{project_id}/{filename}",
+            self.delete_file,
+            methods=["DELETE"],
+            response_model=DeleteFileResponse,
+            summary="Delete a file from blob storage"
+        )
 
 
-@router.post("/upload", response_model=UploadFileResponse, status_code=201)
-async def upload_file(
-    project_id: int,
-    filename: str,
-    file: UploadFile = File(...),
-    content_type: str = None,
-    stage: str = "uploaded",
-    blob_storage_service: BlobStorageService = Depends(get_blob_storage_service),
-    current_user: Dict[str, Any] = Depends(get_current_user_info)
-):
+    async def upload_file(
+        self,
+        project_id: int,
+        filename: str,
+        file: UploadFile = File(...),
+        content_type: str = None,
+        stage: str = "uploaded",
+        user_id: str = Depends(extract_user_id_from_jwt),
+        tenant_slug: str = Depends(extract_tenant_slug_from_jwt)
+    ):
     """
     Upload a file to blob storage.
     
@@ -56,17 +103,26 @@ async def upload_file(
         UploadFileResponse with upload details
     """
     try:
+        # Check if user has access to this project
+        auth_service = self.container.authorization_service(tenant_slug=tenant_slug)
+        if not await auth_service.user_has_project_access(user_id, project_id):
+            logger.warning(f"User {user_id} denied access to project {project_id}")
+            raise HTTPException(status_code=403, detail="Access denied to this project")
+        
         # Read file data
         file_data = await file.read()
         
         # Use provided content_type or file.content_type
         final_content_type = content_type or file.content_type
         
-        # Add user info to metadata
+        # Get blob storage service from container
+        blob_storage_service = self.container.blob_storage_service(tenant_slug=tenant_slug)
+        
+        # Add user and tenant metadata
         metadata = {
-            "uploaded_by": current_user.get("user_id", "unknown"),
+            "uploaded_by": user_id,
             "original_filename": file.filename,
-            "tenant_id": str(current_user.get("tenant_id", "unknown"))
+            "tenant_id": tenant_slug
         }
         
         # Upload file
@@ -127,14 +183,14 @@ async def upload_file(
         )
 
 
-@router.get("/download/{project_id}/{filename}", response_model=DownloadFileResponse)
-async def download_file_info(
-    project_id: int,
-    filename: str,
-    stage: str = "uploaded",
-    blob_storage_service: BlobStorageService = Depends(get_blob_storage_service),
-    current_user: Dict[str, Any] = Depends(get_current_user_info)
-):
+    async def download_file_info(
+        self,
+        project_id: int,
+        filename: str,
+        stage: str = "uploaded",
+        user_id: str = Depends(extract_user_id_from_jwt),
+        tenant_slug: str = Depends(extract_tenant_slug_from_jwt)
+    ):
     """
     Get file information and download URL.
     
@@ -148,6 +204,15 @@ async def download_file_info(
         DownloadFileResponse with file information
     """
     try:
+        # Check if user has access to this project
+        auth_service = self.container.authorization_service(tenant_slug=tenant_slug)
+        if not await auth_service.user_has_project_access(user_id, project_id):
+            logger.warning(f"User {user_id} denied access to project {project_id}")
+            raise HTTPException(status_code=403, detail="Access denied to this project")
+        
+        # Get blob storage service from container
+        blob_storage_service = self.container.blob_storage_service(tenant_slug=tenant_slug)
+        
         # Check if file exists
         exists = await blob_storage_service.file_exists(project_id, filename, stage=stage)
         if not exists:
@@ -191,14 +256,14 @@ async def download_file_info(
         )
 
 
-@router.get("/download/{project_id}/{filename}/content")
-async def download_file_content(
-    project_id: int,
-    filename: str,
-    stage: str = "uploaded",
-    blob_storage_service: BlobStorageService = Depends(get_blob_storage_service),
-    current_user: Dict[str, Any] = Depends(get_current_user_info)
-):
+    async def download_file_content(
+        self,
+        project_id: int,
+        filename: str,
+        stage: str = "uploaded",
+        user_id: str = Depends(extract_user_id_from_jwt),
+        tenant_slug: str = Depends(extract_tenant_slug_from_jwt)
+    ):
     """
     Download file content as streaming response.
     
@@ -212,6 +277,15 @@ async def download_file_content(
         StreamingResponse with file content
     """
     try:
+        # Check if user has access to this project
+        auth_service = self.container.authorization_service(tenant_slug=tenant_slug)
+        if not await auth_service.user_has_project_access(user_id, project_id):
+            logger.warning(f"User {user_id} denied access to project {project_id}")
+            raise HTTPException(status_code=403, detail="Access denied to this project")
+        
+        # Get blob storage service from container
+        blob_storage_service = self.container.blob_storage_service(tenant_slug=tenant_slug)
+        
         # Check if file exists
         exists = await blob_storage_service.file_exists(project_id, filename, stage=stage)
         if not exists:
@@ -253,14 +327,14 @@ async def download_file_content(
         )
 
 
-@router.delete("/{project_id}/{filename}", response_model=DeleteFileResponse)
-async def delete_file(
-    project_id: int,
-    filename: str,
-    stage: str = "uploaded",
-    blob_storage_service: BlobStorageService = Depends(get_blob_storage_service),
-    current_user: Dict[str, Any] = Depends(get_current_user_info)
-):
+    async def delete_file(
+        self,
+        project_id: int,
+        filename: str,
+        stage: str = "uploaded",
+        user_id: str = Depends(extract_user_id_from_jwt),
+        tenant_slug: str = Depends(extract_tenant_slug_from_jwt)
+    ):
     """
     Delete a file from blob storage.
     
@@ -274,6 +348,15 @@ async def delete_file(
         DeleteFileResponse with deletion details
     """
     try:
+        # Check if user has access to this project
+        auth_service = self.container.authorization_service(tenant_slug=tenant_slug)
+        if not await auth_service.user_has_project_access(user_id, project_id):
+            logger.warning(f"User {user_id} denied access to project {project_id}")
+            raise HTTPException(status_code=403, detail="Access denied to this project")
+        
+        # Get blob storage service from container
+        blob_storage_service = self.container.blob_storage_service(tenant_slug=tenant_slug)
+        
         # Delete file
         deleted = await blob_storage_service.delete_file(project_id, filename, stage=stage)
         
@@ -281,7 +364,6 @@ async def delete_file(
             success=True,
             filename=filename,
             project_id=project_id,
-            deleted=deleted,
             message="File deleted successfully" if deleted else "File not found for deletion"
         )
         

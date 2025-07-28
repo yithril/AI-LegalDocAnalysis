@@ -4,7 +4,7 @@ from fastapi import HTTPException, Header, Depends
 from services.authentication_service import AuthenticationInterface
 from services.authentication_service.authentication_interface import UserClaims
 from .jwt_interface import JWTInterface
-from container import Container
+from dependency_injector import containers
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +143,7 @@ class JWTService(JWTInterface):
         return user_claims.permissions or []
 
 # Dependency functions that use the container
-async def get_jwt_service(container: Container) -> JWTService:
+async def get_jwt_service(container: containers.Container) -> JWTService:
     """Get the JWT service from the container"""
     auth_service = container.authentication_service()
     return JWTService(auth_service)

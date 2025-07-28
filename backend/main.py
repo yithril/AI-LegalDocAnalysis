@@ -7,6 +7,7 @@ from services.infrastructure import database_provider
 from controllers.tenant import TenantController
 from controllers.user import UserController
 from controllers.project import ProjectController
+from controllers.blob_storage.storage_controller import BlobStorageController
 from container import Container
 from config import settings
 
@@ -84,11 +85,13 @@ container.config.from_dict({
 tenant_controller = TenantController(container)
 user_controller = UserController(container)
 project_controller = ProjectController(container)
+blob_storage_controller = BlobStorageController(container)
 
 # Include routers
 app.include_router(tenant_controller.router)
 app.include_router(user_controller.router)
 app.include_router(project_controller.router)
+app.include_router(blob_storage_controller.router)
 
 @app.get("/")
 async def root():

@@ -1,6 +1,7 @@
 from sqlalchemy import Column, String, Text
 from sqlalchemy.orm import validates
 from models.base import AuditableBase
+import re
 
 class Tenant(AuditableBase):
     """Central tenant model for storing tenant metadata and connection information"""
@@ -23,15 +24,28 @@ class Tenant(AuditableBase):
         if not slug or not slug.strip():
             raise ValueError("Slug cannot be empty")
         
-        # Check for hyphens in slug
-        if '-' in slug:
-            raise ValueError("Slug cannot contain hyphens. Use underscores instead.")
+        slug = slug.strip().lower()
         
-        # Check for other invalid characters
-        if not slug.replace('_', '').replace('-', '').isalnum():
-            raise ValueError("Slug can only contain letters, numbers, and underscores")
+        # Check for valid characters (letters, numbers, hyphens, underscores)
+        if not re.match(r'^[a-z0-9_-]+$', slug):
+            raise ValueError("Slug can only contain letters, numbers, hyphens, and underscores")
         
-        return slug.strip().lower()
+        # Check length (considering Azure storage name limits)
+        if len(slug) > 20:
+            raise ValueError("Slug cannot be longer than 20 characters (to fit Azure storage naming)")
+        
+        if len(slug) < 3:
+            raise ValueError("Slug must be at least 3 characters")
+        
+        # Check for consecutive hyphens or underscores
+        if '--' in slug or '__' in slug:
+            raise ValueError("Slug cannot contain consecutive hyphens or underscores")
+        
+        # Check for leading/trailing hyphens or underscores
+        if slug.startswith('-') or slug.startswith('_') or slug.endswith('-') or slug.endswith('_'):
+            raise ValueError("Slug cannot start or end with hyphens or underscores")
+        
+        return slug
     
     def __repr__(self):
         return f"<Tenant(id={self.id}, slug='{self.slug}', name='{self.name}')>" 

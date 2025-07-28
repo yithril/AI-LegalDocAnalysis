@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Integer, Index, Enum as SQLEnum
+from sqlalchemy import Column, String, Integer, Index, Enum as SQLEnum, Float, Text, JSON
 from sqlalchemy.orm import validates
 from models.base import AuditableBase
 import enum
@@ -53,6 +53,18 @@ class Document(AuditableBase):
     filename = Column(String(255), nullable=False, index=True)
     original_file_path = Column(String(500), nullable=False)  # Path in blob storage
     status = Column(SQLEnum(DocumentStatus), nullable=False, default=DocumentStatus.UPLOADED, index=True)
+    
+    # Classification results
+    document_type = Column(String(100), nullable=True, index=True)  # e.g., "contract", "statement of work"
+    classification_confidence = Column(Float, nullable=True)  # e.g., 0.905
+    classification_candidates = Column(JSON, nullable=True)  # Store all candidates with scores
+    
+    # Summarization results
+    classification_summary = Column(Text, nullable=True)  # The summary used for classification
+    human_summary = Column(Text, nullable=True)  # Summary for human review (future)
+    
+    # Processing metadata
+    text_extraction_result = Column(Text, nullable=True)  # Extracted text content
     
     # Relationships
     project_id = Column(Integer, nullable=False, index=True)  # Foreign key to projects table
