@@ -281,6 +281,14 @@ azure-deploy-*.log
 *.p8z
 
 # Configuration files with sensitive data
+backend/config/files/development.toml
+backend/config/files/production.toml
+backend/config/files/staging.toml
+backend/config/files/test.toml
+backend/config/files/local.toml
+backend/config/files/secrets.toml
+backend/config/files/azure.toml
+backend/config/files/pinecone.toml
 config/files/development.toml
 config/files/production.toml
 config/files/staging.toml
