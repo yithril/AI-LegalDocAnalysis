@@ -5,7 +5,9 @@ import asyncio
 import logging
 from temporalio.client import Client
 from temporalio.worker import Worker
-from ..document_workflow import DocumentWorkflow, save_document_info, check_document_exists
+from ..document_workflow import DocumentWorkflow
+from ..activities.document_processing.validation_activities import check_document_exists, validate_file_type
+from ..activities.document_processing.storage_activities import save_document_info
 
 
 class DocumentWorker:
@@ -29,7 +31,7 @@ class DocumentWorker:
             self.client,
             task_queue="document-processing",
             workflows=[DocumentWorkflow],
-            activities=[save_document_info, check_document_exists]
+            activities=[check_document_exists, validate_file_type, save_document_info]
         )
         
         logging.info("Document worker created, starting to run...")

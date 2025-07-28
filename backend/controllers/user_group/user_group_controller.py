@@ -8,44 +8,21 @@ from dtos.user_group import (
 )
 from services.user_group_service import UserGroupService
 from services.authorization_service import (
-    require_authentication,
-    get_authenticated_user_id,
-    get_authenticated_tenant_slug
+    extract_user_id_from_jwt,
+    extract_tenant_slug_from_jwt,
+    extract_user_roles_from_jwt
 )
+from models.roles import UserRole
 from container import Container
 
 logger = logging.getLogger(__name__)
-
-async def require_admin_for_user_groups(
-    user_claims = Depends(require_authentication),
-    container: Container = Depends()
-) -> None:
-    """Dependency that requires ADMIN role for user group operations"""
-    from services.authorization_service import AuthorizationService
-    from models.roles import UserRole
-    
-    # Get tenant slug from user claims
-    tenant_slug = user_claims.tenant_slug
-    if not tenant_slug:
-        raise HTTPException(status_code=400, detail="Tenant information required")
-    
-    # Check if user has admin role
-    auth_service = container.authorization_service(tenant_slug=tenant_slug)
-    if not await auth_service.user_has_role(user_claims.user_id, [UserRole.ADMIN]):
-        logger.warning(f"User {user_claims.user_id} attempted user group operation without ADMIN role")
-        raise HTTPException(status_code=403, detail="ADMIN role required for user group operations")
 
 class UserGroupController:
     """Controller for user group-related endpoints"""
     
     def __init__(self, container: Container):
         self.container = container
-        # Apply ADMIN requirement to all routes in this router
-        self.router = APIRouter(
-            prefix="/api/user-groups", 
-            tags=["user-groups"],
-            dependencies=[Depends(require_admin_for_user_groups)]
-        )
+        self.router = APIRouter(prefix="/api/user-groups", tags=["user-groups"])
         self._setup_routes()
     
     def _setup_routes(self):
@@ -128,14 +105,27 @@ class UserGroupController:
             summary="Get all groups for a specific user"
         )
     
+    async def _require_admin_role(
+        self,
+        user_roles: List[str] = Depends(extract_user_roles_from_jwt)
+    ) -> None:
+        """Dependency that requires ADMIN role for user group operations"""
+        if UserRole.ADMIN.value not in user_roles:
+            logger.warning(f"User attempted user group operation without ADMIN role. Roles: {user_roles}")
+            raise HTTPException(status_code=403, detail="ADMIN role required for user group operations")
+    
     async def create_user_group(
         self, 
         request: CreateUserGroupRequest,
-        user_id: str = Depends(get_authenticated_user_id),
-        tenant_slug: str = Depends(get_authenticated_tenant_slug)
+        user_id: int = Depends(extract_user_id_from_jwt),
+        tenant_slug: str = Depends(extract_tenant_slug_from_jwt),
+        user_roles: List[str] = Depends(extract_user_roles_from_jwt)
     ) -> CreateUserGroupResponse:
         """Create a new user group (ADMIN only)"""
         try:
+            # Check admin role
+            await self._require_admin_role(user_roles)
+            
             logger.info(f"Creating user group '{request.name}' by user: {user_id}")
             
             user_group_service = self.container.user_group_service(tenant_slug=tenant_slug)
@@ -157,10 +147,14 @@ class UserGroupController:
     
     async def get_all_user_groups(
         self,
-        tenant_slug: str = Depends(get_authenticated_tenant_slug)
+        tenant_slug: str = Depends(extract_tenant_slug_from_jwt),
+        user_roles: List[str] = Depends(extract_user_roles_from_jwt)
     ) -> List[GetUserGroupResponse]:
         """Get all user groups (ADMIN only)"""
         try:
+            # Check admin role
+            await self._require_admin_role(user_roles)
+            
             user_group_service = self.container.user_group_service(tenant_slug=tenant_slug)
             user_groups = await user_group_service.get_all_user_groups()
             logger.info(f"Retrieved {len(user_groups)} user groups")
@@ -171,19 +165,22 @@ class UserGroupController:
             raise HTTPException(status_code=500, detail="Internal server error")
     
     async def get_user_group_by_id(
-        self, 
+        self,
         user_group_id: int = Path(..., description="User Group ID"),
-        tenant_slug: str = Depends(get_authenticated_tenant_slug)
+        tenant_slug: str = Depends(extract_tenant_slug_from_jwt),
+        user_roles: List[str] = Depends(extract_user_roles_from_jwt)
     ) -> GetUserGroupResponse:
         """Get user group by ID (ADMIN only)"""
         try:
+            # Check admin role
+            await self._require_admin_role(user_roles)
+            
             user_group_service = self.container.user_group_service(tenant_slug=tenant_slug)
             user_group = await user_group_service.get_user_group_by_id(user_group_id)
             
             if not user_group:
                 raise HTTPException(status_code=404, detail="User group not found")
             
-            logger.info(f"Retrieved user group: {user_group_id}")
             return user_group
             
         except HTTPException:
@@ -193,22 +190,30 @@ class UserGroupController:
             raise HTTPException(status_code=500, detail="Internal server error")
     
     async def update_user_group(
-        self, 
+        self,
         user_group_id: int = Path(..., description="User Group ID"),
         request: UpdateUserGroupRequest = None,
-        user_id: str = Depends(get_authenticated_user_id),
-        tenant_slug: str = Depends(get_authenticated_tenant_slug)
+        tenant_slug: str = Depends(extract_tenant_slug_from_jwt),
+        user_roles: List[str] = Depends(extract_user_roles_from_jwt)
     ) -> UpdateUserGroupResponse:
         """Update a user group (ADMIN only)"""
         try:
-            logger.info(f"Updating user group {user_group_id} by user: {user_id}")
+            # Check admin role
+            await self._require_admin_role(user_roles)
+            
+            logger.info(f"Updating user group {user_group_id} by user with roles: {user_roles}")
             
             user_group_service = self.container.user_group_service(tenant_slug=tenant_slug)
             result = await user_group_service.update_user_group(user_group_id, request)
             
+            if not result:
+                raise HTTPException(status_code=404, detail="User group not found")
+            
             logger.info(f"Successfully updated user group: {user_group_id}")
             return result
             
+        except HTTPException:
+            raise
         except ValueError as e:
             logger.warning(f"Validation error updating user group {user_group_id}: {e}")
             raise HTTPException(status_code=400, detail=str(e))
@@ -217,23 +222,26 @@ class UserGroupController:
             raise HTTPException(status_code=500, detail="Internal server error")
     
     async def delete_user_group(
-        self, 
+        self,
         user_group_id: int = Path(..., description="User Group ID"),
-        user_id: str = Depends(get_authenticated_user_id),
-        tenant_slug: str = Depends(get_authenticated_tenant_slug)
+        tenant_slug: str = Depends(extract_tenant_slug_from_jwt),
+        user_roles: List[str] = Depends(extract_user_roles_from_jwt)
     ) -> dict:
         """Delete a user group (ADMIN only)"""
         try:
-            logger.info(f"Deleting user group {user_group_id} by user: {user_id}")
+            # Check admin role
+            await self._require_admin_role(user_roles)
+            
+            logger.info(f"Deleting user group {user_group_id} by user with roles: {user_roles}")
             
             user_group_service = self.container.user_group_service(tenant_slug=tenant_slug)
             success = await user_group_service.delete_user_group(user_group_id)
             
-            if success:
-                logger.info(f"Successfully deleted user group: {user_group_id}")
-                return {"message": "User group deleted successfully"}
-            else:
+            if not success:
                 raise HTTPException(status_code=404, detail="User group not found")
+            
+            logger.info(f"Successfully deleted user group: {user_group_id}")
+            return {"message": "User group deleted successfully"}
             
         except HTTPException:
             raise
@@ -245,11 +253,15 @@ class UserGroupController:
         self, 
         user_group_id: int = Path(..., description="User Group ID"),
         user_id: int = Path(..., description="User ID"),
-        admin_user_id: str = Depends(get_authenticated_user_id),
-        tenant_slug: str = Depends(get_authenticated_tenant_slug)
+        admin_user_id: int = Depends(extract_user_id_from_jwt),
+        tenant_slug: str = Depends(extract_tenant_slug_from_jwt),
+        user_roles: List[str] = Depends(extract_user_roles_from_jwt)
     ) -> dict:
         """Add user to group (ADMIN only)"""
         try:
+            # Check admin role
+            await self._require_admin_role(user_roles)
+            
             logger.info(f"Adding user {user_id} to group {user_group_id} by admin: {admin_user_id}")
             
             user_group_service = self.container.user_group_service(tenant_slug=tenant_slug)
@@ -269,11 +281,15 @@ class UserGroupController:
         self, 
         user_group_id: int = Path(..., description="User Group ID"),
         user_id: int = Path(..., description="User ID"),
-        admin_user_id: str = Depends(get_authenticated_user_id),
-        tenant_slug: str = Depends(get_authenticated_tenant_slug)
+        admin_user_id: int = Depends(extract_user_id_from_jwt),
+        tenant_slug: str = Depends(extract_tenant_slug_from_jwt),
+        user_roles: List[str] = Depends(extract_user_roles_from_jwt)
     ) -> dict:
         """Remove user from group (ADMIN only)"""
         try:
+            # Check admin role
+            await self._require_admin_role(user_roles)
+            
             logger.info(f"Removing user {user_id} from group {user_group_id} by admin: {admin_user_id}")
             
             user_group_service = self.container.user_group_service(tenant_slug=tenant_slug)
@@ -290,40 +306,41 @@ class UserGroupController:
             raise HTTPException(status_code=500, detail="Internal server error")
     
     async def get_users_in_group(
-        self, 
+        self,
         user_group_id: int = Path(..., description="User Group ID"),
-        tenant_slug: str = Depends(get_authenticated_tenant_slug)
-    ) -> List[dict]:
+        tenant_slug: str = Depends(extract_tenant_slug_from_jwt),
+        user_roles: List[str] = Depends(extract_user_roles_from_jwt)
+    ) -> dict:
         """Get all users in a group (ADMIN only)"""
         try:
+            # Check admin role
+            await self._require_admin_role(user_roles)
+            
+            logger.info(f"Getting users in group {user_group_id}")
+            
             user_group_service = self.container.user_group_service(tenant_slug=tenant_slug)
             users = await user_group_service.get_users_in_group(user_group_id)
             
-            # Convert to simple dict format for response
-            user_list = []
-            for user in users:
-                user_list.append({
-                    "id": user.id,
-                    "email": user.email,
-                    "name": user.name,
-                    "role": user.role,
-                    "is_active": user.is_active
-                })
-            
-            logger.info(f"Retrieved {len(user_list)} users from group {user_group_id}")
-            return user_list
+            logger.info(f"Retrieved {len(users)} users from group {user_group_id}")
+            return {"users": users}
             
         except Exception as e:
             logger.error(f"Unexpected error getting users in group {user_group_id}: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error")
     
     async def get_user_groups_for_user(
-        self, 
+        self,
         user_id: int = Path(..., description="User ID"),
-        tenant_slug: str = Depends(get_authenticated_tenant_slug)
+        tenant_slug: str = Depends(extract_tenant_slug_from_jwt),
+        user_roles: List[str] = Depends(extract_user_roles_from_jwt)
     ) -> List[GetUserGroupResponse]:
         """Get all groups for a specific user (ADMIN only)"""
         try:
+            # Check admin role
+            await self._require_admin_role(user_roles)
+            
+            logger.info(f"Getting groups for user {user_id}")
+            
             user_group_service = self.container.user_group_service(tenant_slug=tenant_slug)
             user_groups = await user_group_service.get_user_groups_for_user(user_id)
             
