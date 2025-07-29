@@ -148,6 +148,33 @@ async def migrate_all_tenants(command: str = "upgrade", revision: str = "head"):
     finally:
         await database_provider.close()
 
+async def create_migrations_for_all_tenants():
+    """Create initial migrations for all tenants from the central database"""
+    try:
+        await database_provider.initialize()
+        tenant_service = TenantService()
+        tenants = await tenant_service.get_all_tenants()
+        
+        print(f"🔄 Creating migrations for all {len(tenants.tenants)} tenants...")
+        
+        success_count = 0
+        for tenant in tenants.tenants:
+            print(f"\n📋 Creating migration for tenant: {tenant.slug}")
+            success = await create_initial_migration(tenant.slug)
+            if success:
+                success_count += 1
+            else:
+                print(f"❌ Failed to create migration for tenant: {tenant.slug}")
+        
+        print(f"\n✅ Successfully created migrations for {success_count}/{len(tenants.tenants)} tenants")
+        return success_count == len(tenants.tenants)
+        
+    except Exception as e:
+        print(f"❌ Error creating migrations for all tenants: {e}")
+        return False
+    finally:
+        await database_provider.close()
+
 
 def main():
     """Main entry point"""
@@ -155,12 +182,14 @@ def main():
         print("Usage:")
         print("  python run_tenant_migration.py list")
         print("  python run_tenant_migration.py create <tenant_slug>")
+        print("  python run_tenant_migration.py create-all")
         print("  python run_tenant_migration.py all [command] [revision]")
         print("  python run_tenant_migration.py <tenant_slug> [command] [revision]")
         print("")
         print("Examples:")
         print("  python run_tenant_migration.py list")
         print("  python run_tenant_migration.py create gazdecki_consortium")
+        print("  python run_tenant_migration.py create-all")
         print("  python run_tenant_migration.py all")
         print("  python run_tenant_migration.py gazdecki_consortium")
         print("  python run_tenant_migration.py gazdecki_consortium upgrade head")
@@ -177,6 +206,9 @@ def main():
             return
         tenant_slug = sys.argv[2]
         success = asyncio.run(create_initial_migration(tenant_slug))
+        sys.exit(0 if success else 1)
+    elif command == "create-all":
+        success = asyncio.run(create_migrations_for_all_tenants())
         sys.exit(0 if success else 1)
     elif command == "all":
         alembic_command = sys.argv[2] if len(sys.argv) > 2 else "upgrade"

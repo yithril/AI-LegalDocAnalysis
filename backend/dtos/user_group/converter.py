@@ -15,9 +15,9 @@ class UserGroupConverter:
             name=user_group.name,
             tenant_id=user_group.tenant_id,
             created_at=user_group.created_at.isoformat() if user_group.created_at else None,
-            created_by=user_group.created_by,
+            created_by=None,  # Not implemented in current model
             updated_at=user_group.updated_at.isoformat() if user_group.updated_at else None,
-            updated_by=user_group.updated_by
+            updated_by=None   # Not implemented in current model
         )
     
     @staticmethod
@@ -28,9 +28,9 @@ class UserGroupConverter:
             name=user_group.name,
             tenant_id=user_group.tenant_id,
             created_at=user_group.created_at.isoformat() if user_group.created_at else None,
-            created_by=user_group.created_by,
+            created_by=None,  # Not implemented in current model
             updated_at=user_group.updated_at.isoformat() if user_group.updated_at else None,
-            updated_by=user_group.updated_by
+            updated_by=None   # Not implemented in current model
         )
     
     @staticmethod
@@ -41,9 +41,9 @@ class UserGroupConverter:
             name=user_group.name,
             tenant_id=user_group.tenant_id,
             created_at=user_group.created_at.isoformat() if user_group.created_at else None,
-            created_by=user_group.created_by,
+            created_by=None,  # Not implemented in current model
             updated_at=user_group.updated_at.isoformat() if user_group.updated_at else None,
-            updated_by=user_group.updated_by
+            updated_by=None   # Not implemented in current model
         )
     
     @staticmethod

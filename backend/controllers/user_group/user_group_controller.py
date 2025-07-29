@@ -6,6 +6,7 @@ from dtos.user_group import (
     UpdateUserGroupRequest, UpdateUserGroupResponse,
     GetUserGroupResponse
 )
+from dtos.user import GetUserResponse
 from services.user_group_service import UserGroupService
 from services.authorization_service import (
     extract_user_id_from_jwt,
@@ -104,6 +105,15 @@ class UserGroupController:
             response_model=List[GetUserGroupResponse],
             summary="Get all groups for a specific user"
         )
+        
+        # Get users not in a group (for typeahead search)
+        self.router.add_api_route(
+            "/{user_group_id}/available-users",
+            self.get_users_not_in_group,
+            methods=["GET"],
+            response_model=List[GetUserResponse],
+            summary="Get users not in a group (for adding members)"
+        )
     
     async def _require_admin_role(
         self,
@@ -130,9 +140,12 @@ class UserGroupController:
             
             user_group_service = self.container.user_group_service(tenant_slug=tenant_slug)
             
-            # Get tenant ID (you might need to add this to the service)
-            # For now, using a placeholder
-            tenant_id = 1
+            # Get tenant ID from tenant service
+            tenant_service = self.container.tenant_service()
+            tenant = await tenant_service.get_tenant_by_slug(tenant_slug)
+            if not tenant:
+                raise HTTPException(status_code=404, detail="Tenant not found")
+            tenant_id = tenant.id
             
             result = await user_group_service.create_user_group(request, tenant_id)
             logger.info(f"Successfully created user group: {result.id}")
@@ -349,4 +362,31 @@ class UserGroupController:
             
         except Exception as e:
             logger.error(f"Unexpected error getting groups for user {user_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Internal server error")
+    
+    async def get_users_not_in_group(
+        self,
+        user_group_id: int = Path(..., description="User Group ID"),
+        search_term: Optional[str] = Query(None, description="Search term for filtering users"),
+        tenant_slug: str = Depends(extract_tenant_slug_from_jwt),
+        user_roles: List[str] = Depends(extract_user_roles_from_jwt)
+    ) -> List[GetUserResponse]:
+        """Get users not in a group for typeahead search (ADMIN only)"""
+        try:
+            # Check admin role
+            await self._require_admin_role(user_roles)
+            
+            logger.info(f"Getting users not in group {user_group_id} with search term: {search_term}")
+            
+            user_group_service = self.container.user_group_service(tenant_slug=tenant_slug)
+            users = await user_group_service.get_users_not_in_group(user_group_id, search_term)
+            
+            logger.info(f"Retrieved {len(users)} users not in group {user_group_id}")
+            return users
+            
+        except ValueError as e:
+            logger.warning(f"Validation error getting users not in group: {e}")
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            logger.error(f"Unexpected error getting users not in group {user_group_id}: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") 

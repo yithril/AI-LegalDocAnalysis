@@ -1,5 +1,7 @@
 import logging
 from typing import Optional
+from datetime import datetime, timedelta
+import jwt
 from .authentication_interface import AuthenticationInterface, UserClaims
 
 logger = logging.getLogger(__name__)
@@ -43,4 +45,39 @@ class AuthenticationService:
                 return None
         except Exception as e:
             logger.error(f"Error extracting user from token: {e}")
-            return None 
+            return None
+    
+    def create_access_token(self, data: dict, expires_delta: Optional[int] = None) -> str:
+        """
+        Create a JWT access token using PyJWT
+        
+        Args:
+            data: Dictionary of claims to include in the token
+            expires_delta: Token expiration time in seconds (default: 30 minutes)
+            
+        Returns:
+            JWT token string
+        """
+        from config import settings
+        
+        to_encode = data.copy()
+        
+        # Set expiration time (default: 30 minutes)
+        if expires_delta is None:
+            expires_delta = 30 * 60  # 30 minutes
+        
+        expire = datetime.utcnow() + timedelta(seconds=expires_delta)
+        to_encode.update({"exp": expire})
+        
+        # Add issued at time
+        to_encode.update({"iat": datetime.utcnow()})
+        
+        # Create token using PyJWT
+        encoded_jwt = jwt.encode(
+            to_encode, 
+            settings.nextauth.secret, 
+            algorithm="HS256"
+        )
+        
+        logger.debug(f"Created access token for user: {data.get('user_id', 'unknown')}")
+        return encoded_jwt 

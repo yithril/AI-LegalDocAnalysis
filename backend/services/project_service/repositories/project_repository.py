@@ -1,7 +1,7 @@
 from typing import List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from models.tenant import Project, ProjectUserGroup, UserGroup
+from models.tenant import Project, ProjectUserGroup, UserGroup, UserUserGroup
 from ...infrastructure.services.database_provider import database_provider
 
 class ProjectRepository:
@@ -149,4 +149,27 @@ class ProjectRepository:
                     UserGroup.is_active == True
                 )
             )
+            return result.scalars().all()
+    
+    async def get_user_groups_not_in_project(self, project_id: int, search_term: Optional[str] = None) -> List[UserGroup]:
+        """Get all user groups that are NOT assigned to a specific project, optionally filtered by search term"""
+        async for session in database_provider.get_tenant_session(self.tenant_slug):
+            # Get user group IDs that are in the project
+            groups_in_project = await session.execute(
+                select(ProjectUserGroup.user_group_id)
+                .where(ProjectUserGroup.project_id == project_id)
+            )
+            group_ids_in_project = [row[0] for row in groups_in_project.fetchall()]
+            
+            # Build the query for groups not in the project
+            query = select(UserGroup).where(
+                UserGroup.is_active == True,
+                UserGroup.id.notin_(group_ids_in_project) if group_ids_in_project else True
+            )
+            
+            # Add search filter if provided
+            if search_term and search_term.strip():
+                query = query.where(UserGroup.name.ilike(f"%{search_term}%"))
+            
+            result = await session.execute(query)
             return result.scalars().all() 

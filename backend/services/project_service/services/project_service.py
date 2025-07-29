@@ -173,4 +173,8 @@ class ProjectService:
     async def get_projects_for_user(self, user_id: int) -> List[GetProjectResponse]:
         """Get all projects that a user has access to through their user groups"""
         projects = await self.project_repository.get_projects_for_user(user_id)
-        return ProjectConverter.to_get_response_list(projects) 
+        return ProjectConverter.to_get_response_list(projects)
+    
+    async def get_user_groups_not_in_project(self, project_id: int, search_term: Optional[str] = None) -> List[UserGroup]:
+        """Get all user groups that are NOT assigned to a specific project, optionally filtered by search term"""
+        return await self.project_repository.get_user_groups_not_in_project(project_id, search_term) 

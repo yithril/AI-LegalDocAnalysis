@@ -12,15 +12,15 @@ class UserConverter:
         """Convert User entity to CreateUserResponse"""
         return CreateUserResponse(
             id=user.id,
-            auth0_user_id=user.auth0_user_id,
+            nextauth_user_id=user.nextauth_user_id or "",  # Handle None case
             email=user.email,
             name=user.name,
             role=user.role,
             tenant_id=user.tenant_id,
             created_at=user.created_at.isoformat() if user.created_at else None,
-            created_by=user.created_by,
+            created_by=None,  # Not implemented in current model
             updated_at=user.updated_at.isoformat() if user.updated_at else None,
-            updated_by=user.updated_by
+            updated_by=None   # Not implemented in current model
         )
     
     @staticmethod
@@ -28,15 +28,15 @@ class UserConverter:
         """Convert User entity to GetUserResponse"""
         return GetUserResponse(
             id=user.id,
-            auth0_user_id=user.auth0_user_id,
+            nextauth_user_id=user.nextauth_user_id or "",  # Handle None case
             email=user.email,
             name=user.name,
             role=user.role,
             tenant_id=user.tenant_id,
             created_at=user.created_at.isoformat() if user.created_at else None,
-            created_by=user.created_by,
+            created_by=None,  # Not implemented in current model
             updated_at=user.updated_at.isoformat() if user.updated_at else None,
-            updated_by=user.updated_by
+            updated_by=None   # Not implemented in current model
         )
     
     @staticmethod
@@ -44,15 +44,15 @@ class UserConverter:
         """Convert User entity to UpdateUserResponse"""
         return UpdateUserResponse(
             id=user.id,
-            auth0_user_id=user.auth0_user_id,
+            nextauth_user_id=user.nextauth_user_id or "",  # Handle None case
             email=user.email,
             name=user.name,
             role=user.role,
             tenant_id=user.tenant_id,
             created_at=user.created_at.isoformat() if user.created_at else None,
-            created_by=user.created_by,
+            created_by=None,  # Not implemented in current model
             updated_at=user.updated_at.isoformat() if user.updated_at else None,
-            updated_by=user.updated_by
+            updated_by=None   # Not implemented in current model
         )
     
     @staticmethod
@@ -64,7 +64,7 @@ class UserConverter:
     def from_create_request(request: CreateUserRequest, tenant_id: int) -> User:
         """Convert CreateUserRequest to User entity"""
         return User(
-            auth0_user_id=request.auth0_user_id,
+            nextauth_user_id=request.nextauth_user_id,
             email=request.email,
             name=request.name,
             role=request.role,
@@ -74,7 +74,7 @@ class UserConverter:
     @staticmethod
     def from_update_request(user: User, request: UpdateUserRequest) -> User:
         """Update existing User entity with UpdateUserRequest data"""
-        user.auth0_user_id = request.auth0_user_id
+        user.nextauth_user_id = request.nextauth_user_id
         user.email = request.email
         user.name = request.name
         user.role = request.role

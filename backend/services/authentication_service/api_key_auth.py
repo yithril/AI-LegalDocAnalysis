@@ -57,9 +57,9 @@ class ApiKeyAuth:
             return False
     
     @staticmethod
-    def validate_auth0_webhook_key(authorization_header: str) -> bool:
+    def validate_webhook_key(authorization_header: str) -> bool:
         """
-        Validate Auth0 webhook API key
+        Validate webhook API key
         
         Args:
             authorization_header: The Authorization header value
@@ -67,5 +67,5 @@ class ApiKeyAuth:
         Returns:
             True if valid, False otherwise
         """
-        expected_key = settings.api.auth0_webhook_key
+        expected_key = settings.api.webhook_secret
         return ApiKeyAuth.validate_api_key(authorization_header, expected_key) 

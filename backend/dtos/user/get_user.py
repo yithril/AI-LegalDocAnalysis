@@ -4,7 +4,7 @@ from typing import Optional
 class GetUserResponse(BaseModel):
     """Response DTO for getting a user"""
     id: int = Field(..., description="ID of the user")
-    auth0_user_id: str = Field(..., description="Auth0 user ID")
+    nextauth_user_id: str = Field(..., description="NextAuth.js session ID")
     email: str = Field(..., description="User's email address")
     name: str = Field(..., description="User's full name")
     role: str = Field(..., description="User's role")

@@ -134,15 +134,28 @@ class AuthorizationService:
             raise HTTPException(status_code=401, detail="Token required")
         
         try:
-            # TODO: Replace with actual JWT validation and claim extraction
-            # For now, this is a placeholder that would be replaced with:
-            # payload = jwt.decode(token, settings.auth0.secret, algorithms=["RS256"])
-            # return payload.get("sub") or payload.get("user_id")
+            # Import here to avoid circular imports
+            from config import settings
+            import jwt
             
-            # Placeholder - replace with actual JWT validation
-            logger.warning("JWT validation not implemented - using placeholder user ID")
-            return 1
+            # Decode the token using NextAuth.js secret
+            payload = jwt.decode(
+                token,
+                settings.nextauth.secret,
+                algorithms=['HS256']
+            )
             
+            # Extract user ID from NextAuth.js token
+            user_id = int(payload.get('sub', 0))
+            logger.debug(f"Successfully extracted user ID from JWT: {user_id}")
+            return user_id
+            
+        except jwt.ExpiredSignatureError:
+            logger.warning("JWT token has expired")
+            raise HTTPException(status_code=401, detail="Token has expired")
+        except jwt.InvalidTokenError as e:
+            logger.error(f"Invalid JWT token: {e}")
+            raise HTTPException(status_code=401, detail="Invalid token")
         except Exception as e:
             logger.error(f"Error extracting user ID from JWT: {e}")
             raise HTTPException(status_code=401, detail="Invalid token")
@@ -172,15 +185,32 @@ class AuthorizationService:
             raise HTTPException(status_code=401, detail="Token required")
         
         try:
-            # TODO: Replace with actual JWT validation and claim extraction
-            # For now, this is a placeholder that would be replaced with:
-            # payload = jwt.decode(token, settings.auth0.secret, algorithms=["RS256"])
-            # return payload.get("tenant_slug") or payload.get("org_id")
+            # Import here to avoid circular imports
+            from config import settings
+            import jwt
             
-            # Placeholder - replace with actual JWT validation
-            logger.warning("JWT validation not implemented - using placeholder tenant slug")
-            return "gazdecki_consortium"
+            # Decode the token using NextAuth.js secret
+            payload = jwt.decode(
+                token,
+                settings.nextauth.secret,
+                algorithms=['HS256']
+            )
             
+            # Extract tenant slug from NextAuth.js token
+            tenant_slug = payload.get('tenant_slug')
+            if not tenant_slug:
+                logger.error("No tenant slug found in JWT token")
+                raise HTTPException(status_code=401, detail="Token missing tenant information")
+            
+            logger.debug(f"Successfully extracted tenant slug from JWT: {tenant_slug}")
+            return tenant_slug
+            
+        except jwt.ExpiredSignatureError:
+            logger.warning("JWT token has expired")
+            raise HTTPException(status_code=401, detail="Token has expired")
+        except jwt.InvalidTokenError as e:
+            logger.error(f"Invalid JWT token: {e}")
+            raise HTTPException(status_code=401, detail="Invalid token")
         except Exception as e:
             logger.error(f"Error extracting tenant slug from JWT: {e}")
             raise HTTPException(status_code=401, detail="Invalid token")
@@ -210,20 +240,26 @@ class AuthorizationService:
             raise HTTPException(status_code=401, detail="Token required")
         
         try:
-            # TODO: Replace with actual JWT validation and claim extraction
-            # For now, this is a placeholder that would be replaced with:
-            # payload = jwt.decode(token, settings.auth0.secret, algorithms=["RS256"])
-            # return payload
+            # Import here to avoid circular imports
+            from config import settings
+            import jwt
             
-            # Placeholder - replace with actual JWT validation
-            logger.warning("JWT validation not implemented - using placeholder claims")
-            return {
-                "user_id": 1,
-                "tenant_slug": "gazdecki_consortium",
-                "email": "admin@example.com",
-                "role": "admin"
-            }
+            # Decode the token using NextAuth.js secret
+            payload = jwt.decode(
+                token,
+                settings.nextauth.secret,
+                algorithms=['HS256']
+            )
             
+            logger.debug(f"Successfully extracted claims from JWT for user: {payload.get('sub')}")
+            return payload
+            
+        except jwt.ExpiredSignatureError:
+            logger.warning("JWT token has expired")
+            raise HTTPException(status_code=401, detail="Token has expired")
+        except jwt.InvalidTokenError as e:
+            logger.error(f"Invalid JWT token: {e}")
+            raise HTTPException(status_code=401, detail="Invalid token")
         except Exception as e:
             logger.error(f"Error extracting claims from JWT: {e}")
             raise HTTPException(status_code=401, detail="Invalid token") 

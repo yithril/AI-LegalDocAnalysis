@@ -8,13 +8,14 @@ from dtos.tenant import (
 )
 from services.tenant_service import TenantService
 from services.authorization_service import require_authentication
+from services.authentication_service.authentication_interface import UserClaims
 from models.roles import UserRole
 from container import Container
 
 # Set up logging
 logger = logging.getLogger(__name__)
 
-async def require_super_user(user_claims = Depends(require_authentication)) -> None:
+async def require_super_user(user_claims: UserClaims = Depends(require_authentication)) -> None:
     """Dependency that requires SUPER_USER role - applied to all tenant endpoints"""
     if UserRole.SUPER_USER.value not in (user_claims.roles or []):
         logger.warning(f"User {user_claims.user_id} attempted tenant operation without SUPER_USER role")

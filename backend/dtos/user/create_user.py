@@ -4,15 +4,18 @@ from models.roles import UserRole
 
 class CreateUserRequest(BaseModel):
     """Request DTO for creating a new user"""
-    auth0_user_id: str = Field(..., min_length=1, max_length=255, description="Auth0 user ID")
+    nextauth_user_id: Optional[str] = Field(None, max_length=255, description="NextAuth.js session ID (optional for local auth)")
     email: str = Field(..., min_length=1, max_length=255, description="User's email address")
     name: str = Field(..., min_length=1, max_length=255, description="User's full name")
     role: str = Field(default=UserRole.VIEWER.value, description="User's role")
+    tenant_slug: str = Field(..., min_length=1, max_length=50, description="Tenant slug (required)")
     
-    @validator('auth0_user_id')
-    def validate_auth0_user_id(cls, v):
-        if not v or not v.strip():
-            raise ValueError("Auth0 user ID cannot be empty")
+    @validator('nextauth_user_id')
+    def validate_nextauth_user_id(cls, v):
+        if v is None:
+            return None
+        if not v.strip():
+            raise ValueError("NextAuth.js session ID cannot be empty if provided")
         return v.strip()
     
     @validator('email')
@@ -36,11 +39,19 @@ class CreateUserRequest(BaseModel):
         except ValueError:
             raise ValueError(f"Invalid role: {v}")
         return v.strip()
+    
+    @validator('tenant_slug')
+    def validate_tenant_slug(cls, v):
+        if not v or not v.strip():
+            raise ValueError("Tenant slug cannot be empty")
+        if len(v.strip()) > 50:
+            raise ValueError("Tenant slug cannot exceed 50 characters")
+        return v.strip().lower()
 
 class CreateUserResponse(BaseModel):
     """Response DTO for creating a new user"""
     id: int = Field(..., description="ID of the created user")
-    auth0_user_id: str = Field(..., description="Auth0 user ID")
+    nextauth_user_id: str = Field(..., description="NextAuth.js session ID")
     email: str = Field(..., description="User's email address")
     name: str = Field(..., description="User's full name")
     role: str = Field(..., description="User's role")

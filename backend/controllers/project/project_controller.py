@@ -6,12 +6,10 @@ from dtos.project import (
     UpdateProjectRequest, UpdateProjectResponse,
     GetProjectResponse
 )
+from dtos.user_group import GetUserGroupResponse
 from services.project_service import ProjectService
-from services.authorization_service import (
-    AuthorizationService,
-    extract_user_id_from_jwt,
-    extract_tenant_slug_from_jwt
-)
+from services.authorization_service import AuthorizationService
+from services.authorization_service.jwt_service import extract_user_id_from_jwt, extract_tenant_slug_from_jwt
 from container import Container
 
 logger = logging.getLogger(__name__)
@@ -78,6 +76,24 @@ class ProjectController:
             summary="Add user group to project"
         )
         
+        # Get user groups for project
+        self.router.add_api_route(
+            "/{project_id}/groups",
+            self.get_user_groups_for_project,
+            methods=["GET"],
+            response_model=List[GetUserGroupResponse],
+            summary="Get user groups assigned to project"
+        )
+        
+        # Get available user groups for project (groups not already assigned)
+        self.router.add_api_route(
+            "/{project_id}/available-groups",
+            self.get_available_user_groups_for_project,
+            methods=["GET"],
+            response_model=List[GetUserGroupResponse],
+            summary="Get user groups available to add to project"
+        )
+        
         # Remove user group from project (ADMIN, PROJECT_MANAGER only)
         self.router.add_api_route(
             "/{project_id}/groups/{user_group_id}",
@@ -89,16 +105,19 @@ class ProjectController:
     async def create_project(
         self, 
         request: CreateProjectRequest, 
-        user_id: str = Depends(extract_user_id_from_jwt),
+        user_id: int = Depends(extract_user_id_from_jwt),
         tenant_slug: str = Depends(extract_tenant_slug_from_jwt)
     ) -> CreateProjectResponse:
         """Create a new project (ADMIN, PROJECT_MANAGER only)"""
         try:
             project_service = self.container.project_service(tenant_slug=tenant_slug)
             
-            # Get tenant ID (you might need to add this to the service)
-            # For now, using a placeholder
-            tenant_id = 1
+            # Get tenant ID from tenant service
+            tenant_service = self.container.tenant_service()
+            tenant = await tenant_service.get_tenant_by_slug(tenant_slug)
+            if not tenant:
+                raise HTTPException(status_code=404, detail="Tenant not found")
+            tenant_id = tenant.id
             
             result = await project_service.create_project(request, tenant_id, user_id)
             logger.info(f"Successfully created project: {result.id}")
@@ -116,7 +135,7 @@ class ProjectController:
     
     async def get_projects(
         self,
-        user_id: str = Depends(extract_user_id_from_jwt),
+        user_id: int = Depends(extract_user_id_from_jwt),
         tenant_slug: str = Depends(extract_tenant_slug_from_jwt)
     ) -> List[GetProjectResponse]:
         """Get all projects accessible to current user"""
@@ -135,7 +154,7 @@ class ProjectController:
     async def get_project_by_id(
         self, 
         project_id: int = Path(..., description="Project ID"),
-        user_id: str = Depends(extract_user_id_from_jwt),
+        user_id: int = Depends(extract_user_id_from_jwt),
         tenant_slug: str = Depends(extract_tenant_slug_from_jwt)
     ) -> GetProjectResponse:
         """Get project by ID (requires project access)"""
@@ -165,7 +184,7 @@ class ProjectController:
         self, 
         project_id: int, 
         request: UpdateProjectRequest,
-        user_id: str = Depends(extract_user_id_from_jwt),
+        user_id: int = Depends(extract_user_id_from_jwt),
         tenant_slug: str = Depends(extract_tenant_slug_from_jwt)
     ) -> UpdateProjectResponse:
         """Update a project (ADMIN, PROJECT_MANAGER only)"""
@@ -189,7 +208,7 @@ class ProjectController:
     async def delete_project(
         self, 
         project_id: int,
-        user_id: str = Depends(extract_user_id_from_jwt),
+        user_id: int = Depends(extract_user_id_from_jwt),
         tenant_slug: str = Depends(extract_tenant_slug_from_jwt)
     ) -> dict:
         """Delete a project (ADMIN, PROJECT_MANAGER only)"""
@@ -216,7 +235,7 @@ class ProjectController:
         self, 
         project_id: int, 
         user_group_id: int,
-        user_id: str = Depends(extract_user_id_from_jwt),
+        user_id: int = Depends(extract_user_id_from_jwt),
         tenant_slug: str = Depends(extract_tenant_slug_from_jwt)
     ) -> dict:
         """Add user group to project (ADMIN, PROJECT_MANAGER only)"""
@@ -243,7 +262,7 @@ class ProjectController:
         self, 
         project_id: int, 
         user_group_id: int,
-        user_id: str = Depends(extract_user_id_from_jwt),
+        user_id: int = Depends(extract_user_id_from_jwt),
         tenant_slug: str = Depends(extract_tenant_slug_from_jwt)
     ) -> dict:
         """Remove user group from project (ADMIN, PROJECT_MANAGER only)"""
@@ -264,4 +283,47 @@ class ProjectController:
             raise
         except Exception as e:
             logger.error(f"Unexpected error removing user group from project {project_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Internal server error")
+    
+    async def get_user_groups_for_project(
+        self, 
+        project_id: int = Path(..., description="Project ID"),
+        user_id: int = Depends(extract_user_id_from_jwt),
+        tenant_slug: str = Depends(extract_tenant_slug_from_jwt)
+    ) -> List[GetUserGroupResponse]:
+        """Get user groups assigned to a project"""
+        try:
+            project_service = self.container.project_service(tenant_slug=tenant_slug)
+            
+            user_groups = await project_service.get_user_groups_for_project(project_id)
+            logger.info(f"Retrieved {len(user_groups)} user groups for project {project_id}")
+            return user_groups
+            
+        except ValueError as e:
+            logger.warning(f"Validation error getting user groups for project {project_id}: {e}")
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            logger.error(f"Unexpected error getting user groups for project {project_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Internal server error")
+    
+    async def get_available_user_groups_for_project(
+        self, 
+        project_id: int = Path(..., description="Project ID"),
+        search_term: Optional[str] = Query(None, description="Search term for filtering groups"),
+        user_id: int = Depends(extract_user_id_from_jwt),
+        tenant_slug: str = Depends(extract_tenant_slug_from_jwt)
+    ) -> List[GetUserGroupResponse]:
+        """Get user groups available to add to a project (groups not already assigned)"""
+        try:
+            project_service = self.container.project_service(tenant_slug=tenant_slug)
+            
+            user_groups = await project_service.get_user_groups_not_in_project(project_id, search_term)
+            logger.info(f"Retrieved {len(user_groups)} available user groups for project {project_id}")
+            return user_groups
+            
+        except ValueError as e:
+            logger.warning(f"Validation error getting available user groups for project {project_id}: {e}")
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            logger.error(f"Unexpected error getting available user groups for project {project_id}: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") 

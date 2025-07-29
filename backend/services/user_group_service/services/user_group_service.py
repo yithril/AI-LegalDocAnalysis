@@ -7,6 +7,7 @@ from dtos.user_group import (
     GetUserGroupResponse, UpdateUserGroupRequest, UpdateUserGroupResponse,
     UserGroupConverter
 )
+from dtos.user import GetUserResponse, UserConverter
 
 logger = logging.getLogger(__name__)
 
@@ -150,4 +151,27 @@ class UserGroupService:
     async def get_user_groups_for_user(self, user_id: int) -> List[GetUserGroupResponse]:
         """Get all user groups that a user belongs to"""
         user_groups = await self.user_group_repository.get_user_groups_for_user(user_id)
-        return UserGroupConverter.to_get_response_list(user_groups) 
+        return UserGroupConverter.to_get_response_list(user_groups)
+    
+    async def get_users_not_in_group(self, user_group_id: int, search_term: Optional[str] = None) -> List[GetUserResponse]:
+        """Get all users not in a specific group, optionally filtered by search term (ADMIN only)"""
+        try:
+            logger.info(f"Getting users not in group {user_group_id} with search term: {search_term}")
+            
+            # Verify the group exists
+            group = await self.user_group_repository.find_by_id(user_group_id)
+            if not group:
+                raise ValueError(f"User group with ID {user_group_id} not found")
+            
+            # Get users not in the group
+            users = await self.user_group_repository.get_users_not_in_group(user_group_id, search_term)
+            
+            logger.info(f"Found {len(users)} users not in group {user_group_id}")
+            return UserConverter.to_get_response_list(users)
+            
+        except ValueError as e:
+            logger.warning(f"Validation error getting users not in group: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error getting users not in group: {e}", exc_info=True)
+            raise 

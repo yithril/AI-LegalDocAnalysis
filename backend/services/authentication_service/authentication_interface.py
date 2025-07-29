@@ -76,6 +76,20 @@ class AuthenticationInterface(ABC):
         Get the name of this authentication provider
         
         Returns:
-            Provider name (e.g., "Auth0", "AzureAD", "ActiveDirectory")
+            Provider name (e.g., "NextAuth.js", "AzureAD", "ActiveDirectory")
+        """
+        pass
+    
+    @abstractmethod
+    def create_access_token(self, data: dict, expires_delta: Optional[int] = None) -> str:
+        """
+        Create a JWT access token
+        
+        Args:
+            data: Dictionary of claims to include in the token
+            expires_delta: Token expiration time in seconds (default: 30 minutes)
+            
+        Returns:
+            JWT token string
         """
         pass 

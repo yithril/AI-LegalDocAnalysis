@@ -1,6 +1,6 @@
 from typing import List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, and_, or_, not_
 from models.tenant import UserGroup, UserUserGroup, User
 from ...infrastructure.services.database_provider import database_provider
 
@@ -131,4 +131,33 @@ class UserGroupRepository:
                 .join(UserUserGroup, UserGroup.id == UserUserGroup.user_group_id)
                 .where(UserUserGroup.user_id == user_id, UserGroup.is_active == True)
             )
+            return result.scalars().all()
+    
+    async def get_users_not_in_group(self, user_group_id: int, search_term: Optional[str] = None) -> List[User]:
+        """Get all users not in a specific group, optionally filtered by search term"""
+        async for session in database_provider.get_tenant_session(self.tenant_slug):
+            # Get user IDs that are in the group
+            users_in_group = await session.execute(
+                select(UserUserGroup.user_id)
+                .where(UserUserGroup.user_group_id == user_group_id)
+            )
+            user_ids_in_group = [row[0] for row in users_in_group.fetchall()]
+            
+            # Build the query for users not in the group
+            query = select(User).where(
+                and_(
+                    User.is_active == True,
+                    not_(User.id.in_(user_ids_in_group)) if user_ids_in_group else True
+                )
+            )
+            
+            # Add search filter if provided
+            if search_term and search_term.strip():
+                search_filter = or_(
+                    User.name.ilike(f"%{search_term}%"),
+                    User.email.ilike(f"%{search_term}%")
+                )
+                query = query.where(search_filter)
+            
+            result = await session.execute(query)
             return result.scalars().all() 

@@ -5,7 +5,7 @@ from ..repositories.user_repository import UserRepository
 from dtos.user import (
     CreateUserRequest, CreateUserResponse,
     GetUserResponse, UpdateUserRequest, UpdateUserResponse,
-    UserConverter, Auth0UserRegistrationResponse
+    UserConverter
 )
 from services.authorization_service import require_role
 from models.roles import UserRole
@@ -31,9 +31,13 @@ class UserService:
             return UserConverter.to_get_response(user)
         return None
     
-    async def get_user_by_auth0_id(self, auth0_user_id: str) -> Optional[User]:
-        """Get user by Auth0 user ID"""
-        return await self.user_repository.find_by_auth0_user_id(auth0_user_id)
+    async def get_user_by_nextauth_id(self, nextauth_user_id: str) -> Optional[User]:
+        """Get user by NextAuth.js session ID"""
+        return await self.user_repository.find_by_nextauth_user_id(nextauth_user_id)
+    
+    async def get_user_by_database_id(self, database_id: int) -> Optional[User]:
+        """Get user by database ID (for business logic)"""
+        return await self.user_repository.find_by_database_id(database_id)
     
     async def get_user_by_email(self, email: str) -> Optional[User]:
         """Get user by email"""
@@ -57,16 +61,24 @@ class UserService:
         users = await self.user_repository.find_all()
         return UserConverter.to_get_response_list(users)
     
-    @require_role([UserRole.ADMIN], "user_id")
-    async def create_user(self, request: CreateUserRequest, tenant_id: int, user_id: int) -> CreateUserResponse:
+    async def create_user(self, request: CreateUserRequest, tenant_id: int) -> CreateUserResponse:
         """Create a new user with business logic validation"""
         try:
-            logger.info(f"Starting user creation for email: {user.email}")
+            logger.info(f"Starting user creation for email: {request.email}")
             
-            # Business logic: Check if Auth0 user ID already exists
-            logger.debug("Checking if Auth0 user ID already exists")
-            if await self.user_repository.exists_by_auth0_user_id(request.auth0_user_id):
-                raise ValueError(f"User with Auth0 ID '{request.auth0_user_id}' already exists")
+            # Validate tenant exists and is active
+            from services.tenant_service import TenantService
+            tenant_service = TenantService()
+            tenant = await tenant_service.get_tenant_by_id(tenant_id)
+            if not tenant or not tenant.is_active:
+                raise ValueError(f"Tenant with ID {tenant_id} not found or inactive")
+            
+            logger.info(f"Creating user in tenant: {tenant.slug}")
+            
+            # Business logic: Check if NextAuth.js user ID already exists
+            logger.debug("Checking if NextAuth.js user ID already exists")
+            if await self.user_repository.exists_by_nextauth_user_id(request.nextauth_user_id):
+                raise ValueError(f"User with NextAuth.js ID '{request.nextauth_user_id}' already exists")
             
             # Business logic: Check if email already exists in the tenant
             logger.debug("Checking if email already exists in tenant")
@@ -103,6 +115,41 @@ class UserService:
         return UserConverter.to_update_response(result)
     
     @require_role([UserRole.ADMIN], "user_id")
+    async def update_user_role(self, user_id: int, new_role: str, current_user_id: int) -> "UpdateUserRoleResponse":
+        """Update a user's role (admin only)"""
+        try:
+            # Get the existing user
+            existing_user = await self.user_repository.find_by_id(user_id)
+            if not existing_user:
+                raise ValueError(f"User with ID {user_id} not found")
+            
+            # Validate the new role
+            try:
+                UserRole.from_string(new_role)
+            except ValueError:
+                raise ValueError(f"Invalid role: {new_role}")
+            
+            # Update the user's role
+            existing_user.role = new_role
+            result = await self.user_repository.update(existing_user)
+            
+            # Convert to response DTO
+            from dtos.user.update_role import UpdateUserRoleResponse
+            return UpdateUserRoleResponse(
+                id=result.id,
+                nextauth_user_id=result.nextauth_user_id,
+                email=result.email,
+                name=result.name,
+                role=result.role,
+                tenant_id=result.tenant_id,
+                updated_at=result.updated_at.isoformat() if result.updated_at else None
+            )
+            
+        except Exception as e:
+            logger.error(f"Error updating user role: {e}", exc_info=True)
+            raise
+    
+    @require_role([UserRole.ADMIN], "user_id")
     async def delete_user(self, user_id: int, current_user_id: int) -> bool:
         """Soft delete a user (authorization handled by decorator)"""
         return await self.user_repository.delete(user_id)
@@ -112,36 +159,34 @@ class UserService:
         # Since we're using tenant-specific databases, the tenant slug is the one used to create the service
         return self.tenant_slug
     
-    async def create_user_from_auth0_webhook(self, request, tenant_slug: str) -> Auth0UserRegistrationResponse:
-        """Create a user from Auth0 webhook (no authorization required)"""
+    async def create_user_from_nextauth_session(self, nextauth_user_id: str, email: str, name: str, tenant_id: int) -> User:
+        """Create a user from NextAuth.js session (no authorization required)"""
         try:
-            logger.info(f"Creating user from Auth0 webhook: {request.email} in tenant: {tenant_slug}")
+            logger.info(f"Creating user from NextAuth.js session: {email} in tenant: {self.tenant_slug}")
+            
+            # Check if user already exists
+            existing_user = await self.user_repository.find_by_nextauth_user_id(nextauth_user_id)
+            if existing_user:
+                logger.info(f"User already exists with NextAuth.js ID: {nextauth_user_id}")
+                return existing_user
             
             # Create user entity
             user = User(
-                auth0_user_id=request.auth0_id,
-                email=request.email,
-                name=request.name,
+                nextauth_user_id=nextauth_user_id,
+                email=email,
+                name=name,
                 role="viewer",  # Default role
-                tenant_id=1  # This will need to be looked up from tenant_slug
+                tenant_id=tenant_id
             )
             
             # Create the user
             created_user = await self.user_repository.create(user)
             
-            logger.info(f"Successfully created user from Auth0 webhook with ID: {created_user.id}")
-            return Auth0UserRegistrationResponse(
-                success=True,
-                user_id=created_user.id,
-                message=f"User created successfully in tenant {tenant_slug}"
-            )
+            logger.info(f"Successfully created user from NextAuth.js session with ID: {created_user.id}")
+            return created_user
             
         except Exception as e:
-            logger.error(f"Error creating user from Auth0 webhook: {e}", exc_info=True)
-            return Auth0UserRegistrationResponse(
-                success=False,
-                user_id=None,
-                message=f"Failed to create user: {str(e)}"
-            )
+            logger.error(f"Error creating user from NextAuth.js session: {e}", exc_info=True)
+            raise
 
 # Note: Global instance removed - UserService now requires tenant_slug parameter 

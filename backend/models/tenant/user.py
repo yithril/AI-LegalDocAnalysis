@@ -8,10 +8,15 @@ class User(AuditableBase):
     """User model for storing user information within a tenant"""
     __tablename__ = 'users'
 
-    auth0_user_id = Column(String(255), unique=True, nullable=False, index=True)
+    # NextAuth.js session ID (usually email or custom ID from NextAuth.js)
+    nextauth_user_id = Column(String(255), unique=True, nullable=True, index=True)
+    
     email = Column(String(255), nullable=False, index=True)
     name = Column(String(255), nullable=False)
     role = Column(String(50), nullable=False, default=UserRole.VIEWER.value, index=True)
+    
+    # Password hash for local authentication (nullable for NextAuth.js users)
+    password_hash = Column(String(255), nullable=True)
     
     # Tenant ID (not a foreign key since tenant is in different database)
     tenant_id = Column(Integer, nullable=False, index=True)
@@ -25,13 +30,17 @@ class User(AuditableBase):
     # Relationships
     user_groups = relationship("UserUserGroup", back_populates="user")
     
-    @validates('auth0_user_id')
-    def validate_auth0_user_id(self, key, auth0_user_id):
-        if not auth0_user_id or not auth0_user_id.strip():
-            raise ValueError("Auth0 user ID cannot be empty")
-        if len(auth0_user_id.strip()) > 255:
-            raise ValueError("Auth0 user ID cannot exceed 255 characters")
-        return auth0_user_id.strip()
+    @validates('nextauth_user_id')
+    def validate_nextauth_user_id(self, key, nextauth_user_id):
+        if nextauth_user_id is None:
+            return None
+        if not nextauth_user_id.strip():
+            raise ValueError("NextAuth.js user ID cannot be empty if provided")
+        if len(nextauth_user_id.strip()) > 255:
+            raise ValueError("NextAuth.js user ID cannot exceed 255 characters")
+        return nextauth_user_id.strip()
+    
+
     
     @validates('email')
     def validate_email(self, key, email):
@@ -66,4 +75,4 @@ class User(AuditableBase):
         return role.strip()
     
     def __repr__(self):
-        return f"<User(id={self.id}, auth0_user_id='{self.auth0_user_id}', email='{self.email}', name='{self.name}')>" 
+        return f"<User(id={self.id}, nextauth_user_id='{self.nextauth_user_id}', email='{self.email}', name='{self.name}')>" 

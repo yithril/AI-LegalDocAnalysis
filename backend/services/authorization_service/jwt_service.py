@@ -142,50 +142,89 @@ class JWTService(JWTInterface):
         user_claims = await self.extract_user_claims_from_jwt(authorization)
         return user_claims.permissions or []
 
-# Dependency functions that use the container
-async def get_jwt_service(container: containers.Container) -> JWTService:
-    """Get the JWT service from the container"""
-    auth_service = container.authentication_service()
-    return JWTService(auth_service)
-
+# Standalone dependency functions that don't require container injection
 async def extract_user_claims_from_jwt(
-    authorization: Optional[str] = Header(None),
-    jwt_service: JWTService = Depends(get_jwt_service)
+    authorization: Optional[str] = Header(None)
 ) -> UserClaims:
     """Extract user claims from JWT token"""
-    return await jwt_service.extract_user_claims_from_jwt(authorization)
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Invalid authorization header")
+    
+    token = authorization[7:]  # Remove "Bearer "
+    if not token:
+        raise HTTPException(status_code=401, detail="Token required")
+    
+    try:
+        # Import here to avoid circular imports
+        from config import settings
+        import jwt
+        
+        # Decode the token using NextAuth.js secret
+        payload = jwt.decode(
+            token,
+            settings.nextauth.secret,
+            algorithms=['HS256']
+        )
+        
+        # Extract user claims from NextAuth.js token
+        # NextAuth.js stores role as 'role' (singular), not 'roles' (plural)
+        role = payload.get('role')
+        roles = [role] if role else []
+        
+        user_claims = UserClaims(
+            user_id=int(payload.get('sub', 0)),  # Convert to int
+            email=payload.get('email'),
+            name=payload.get('name'),
+            tenant_slug=payload.get('tenant_slug'),
+            roles=roles,
+            permissions=payload.get('permissions', []),
+            provider_claims=payload
+        )
+        
+        logger.debug(f"Successfully validated NextAuth.js token for user: {user_claims.user_id}")
+        return user_claims
+        
+    except jwt.ExpiredSignatureError:
+        logger.warning("NextAuth.js token has expired")
+        raise HTTPException(status_code=401, detail="Token has expired")
+    except jwt.InvalidTokenError as e:
+        logger.error(f"Invalid NextAuth.js token: {e}")
+        raise HTTPException(status_code=401, detail="Invalid token")
+    except Exception as e:
+        logger.error(f"Error validating NextAuth.js token: {e}")
+        raise HTTPException(status_code=401, detail="Invalid token")
 
 async def extract_user_id_from_jwt(
-    authorization: Optional[str] = Header(None),
-    jwt_service: JWTService = Depends(get_jwt_service)
-) -> str:
+    authorization: Optional[str] = Header(None)
+) -> int:
     """Extract user ID from JWT token"""
-    return await jwt_service.extract_user_id_from_jwt(authorization)
+    user_claims = await extract_user_claims_from_jwt(authorization)
+    return user_claims.user_id
 
 async def extract_tenant_slug_from_jwt(
-    authorization: Optional[str] = Header(None),
-    jwt_service: JWTService = Depends(get_jwt_service)
+    authorization: Optional[str] = Header(None)
 ) -> str:
     """Extract tenant slug from JWT token"""
-    return await jwt_service.extract_tenant_slug_from_jwt(authorization)
+    user_claims = await extract_user_claims_from_jwt(authorization)
+    return user_claims.tenant_slug
 
 async def extract_user_email_from_jwt(
-    authorization: Optional[str] = Header(None),
-    jwt_service: JWTService = Depends(get_jwt_service)
+    authorization: Optional[str] = Header(None)
 ) -> str:
     """Extract user email from JWT token"""
-    return await jwt_service.extract_user_email_from_jwt(authorization)
+    user_claims = await extract_user_claims_from_jwt(authorization)
+    return user_claims.email
 
 async def extract_user_roles_from_jwt(
-    authorization: Optional[str] = Header(None),
-    jwt_service: JWTService = Depends(get_jwt_service)
+    authorization: Optional[str] = Header(None)
 ) -> list[str]:
     """Extract user roles from JWT token"""
-    return await jwt_service.extract_user_roles_from_jwt(authorization)
+    user_claims = await extract_user_claims_from_jwt(authorization)
+    return user_claims.roles or []
 
 async def extract_user_permissions_from_jwt(
-    authorization: Optional[str] = Header(None),
-    jwt_service: JWTService = Depends(get_jwt_service)
+    authorization: Optional[str] = Header(None)
 ) -> list[str]:
     """Extract user permissions from JWT token"""
-    return await jwt_service.extract_user_permissions_from_jwt(authorization) 
+    user_claims = await extract_user_claims_from_jwt(authorization)
+    return user_claims.permissions or [] 

@@ -18,11 +18,19 @@ class UserRepository:
             )
             return result.scalar_one_or_none()
     
-    async def find_by_auth0_user_id(self, auth0_user_id: str) -> Optional[User]:
-        """Find user by Auth0 user ID"""
+    async def find_by_nextauth_user_id(self, nextauth_user_id: str) -> Optional[User]:
+        """Find user by NextAuth.js session ID"""
         async for session in database_provider.get_tenant_session(self.tenant_slug):
             result = await session.execute(
-                select(User).where(User.auth0_user_id == auth0_user_id, User.is_active == True)
+                select(User).where(User.nextauth_user_id == nextauth_user_id, User.is_active == True)
+            )
+            return result.scalar_one_or_none()
+    
+    async def find_by_database_id(self, database_id: int) -> Optional[User]:
+        """Find user by database ID (for business logic)"""
+        async for session in database_provider.get_tenant_session(self.tenant_slug):
+            result = await session.execute(
+                select(User).where(User.id == database_id, User.is_active == True)
             )
             return result.scalar_one_or_none()
     
@@ -75,11 +83,11 @@ class UserRepository:
                 return True
             return False
     
-    async def exists_by_auth0_user_id(self, auth0_user_id: str) -> bool:
-        """Check if a user with the given Auth0 user ID exists"""
+    async def exists_by_nextauth_user_id(self, nextauth_user_id: str) -> bool:
+        """Check if a user with the given NextAuth.js session ID exists"""
         async for session in database_provider.get_tenant_session(self.tenant_slug):
             result = await session.execute(
-                select(User.id).where(User.auth0_user_id == auth0_user_id, User.is_active == True)
+                select(User.id).where(User.nextauth_user_id == nextauth_user_id, User.is_active == True)
             )
             return result.scalar_one_or_none() is not None
     
