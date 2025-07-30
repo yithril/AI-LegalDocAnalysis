@@ -4,45 +4,32 @@ import { useState, useEffect } from 'react'
 import { useAuth } from '@/hooks/useAuth'
 import { getRoleDisplayName } from '@/lib/roles'
 import { useTheme } from '@/components/providers/ThemeProvider'
-import { useAuthenticatedFetch } from '@/hooks/useAuthenticatedFetch'
-
-// Types
-interface UserGroup {
-  id: number
-  name: string
-  tenant_id: number
-  created_at: string
-  created_by?: string
-  updated_at: string
-  updated_by?: string
-}
+import { useApiClient } from '@/lib/api-client'
+import type { GetUserGroupResponse } from '@/types/api'
 
 interface UserGroupsProps {
   className?: string
 }
 
 export default function UserGroups({ className = '' }: UserGroupsProps) {
-  const [userGroups, setUserGroups] = useState<UserGroup[]>([])
+  const [userGroups, setUserGroups] = useState<GetUserGroupResponse[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState('')
   
   const { user, userRole } = useAuth()
   const { theme } = useTheme()
-  const { authenticatedFetch, hasToken } = useAuthenticatedFetch({
-    onError: (error) => setError(error)
-  })
+  const apiClient = useApiClient()
 
   useEffect(() => {
-    if (hasToken) {
+    if (user) {
       fetchUserGroups()
     }
-  }, [hasToken])
+  }, [user])
 
   const fetchUserGroups = async () => {
     try {
       setIsLoading(true)
-      const response = await authenticatedFetch('/api/users/me/groups')
-      const data = await response.json()
+      const data = await apiClient.getMyGroups()
       setUserGroups(data)
     } catch (err) {
       setError('Failed to load user groups')

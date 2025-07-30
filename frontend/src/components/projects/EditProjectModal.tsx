@@ -6,7 +6,8 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import Modal from '@/components/shared/Modal'
 import ModalForm from '@/components/shared/ModalForm'
-import { useAuthenticatedFetch } from '@/hooks/useAuthenticatedFetch'
+import { useApiClient } from '@/lib/api-client'
+import type { GetProjectResponse, UpdateProjectRequest } from '@/types/api'
 
 const editProjectSchema = z.object({
   name: z.string().min(1, 'Project name is required').max(255, 'Project name must be less than 255 characters'),
@@ -25,29 +26,16 @@ const editProjectSchema = z.object({
 
 type EditProjectFormData = z.infer<typeof editProjectSchema>
 
-interface Project {
-  id: number
-  name: string
-  description?: string
-  document_start_date: string
-  document_end_date: string
-  tenant_id: number
-  created_at: string
-  created_by?: string
-  updated_at: string
-  updated_by?: string
-}
-
 interface EditProjectModalProps {
   isOpen: boolean
   onClose: () => void
   onSuccess: () => void
-  project: Project | null
+  project: GetProjectResponse | null
 }
 
 export default function EditProjectModal({ isOpen, onClose, onSuccess, project }: EditProjectModalProps) {
   const [isLoading, setIsLoading] = useState(false)
-  const { authenticatedFetch } = useAuthenticatedFetch()
+  const apiClient = useApiClient()
 
   const {
     register,
@@ -75,15 +63,17 @@ export default function EditProjectModal({ isOpen, onClose, onSuccess, project }
     try {
       setIsLoading(true)
       
-      const response = await authenticatedFetch(`/api/projects/${project.id}`, {
-        method: 'PUT',
-        body: JSON.stringify(data)
-      })
-
-      if (response.ok) {
-        onSuccess()
-        onClose()
+      const updateRequest: UpdateProjectRequest = {
+        name: data.name,
+        description: data.description || '',
+        document_start_date: data.document_start_date,
+        document_end_date: data.document_end_date
       }
+
+      await apiClient.updateProject(project.id, updateRequest)
+
+      onSuccess()
+      onClose()
     } catch (error) {
       console.error('Error updating project:', error)
     } finally {

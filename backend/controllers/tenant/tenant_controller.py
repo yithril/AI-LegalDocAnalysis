@@ -6,20 +6,13 @@ from dtos.tenant import (
     UpdateTenantRequest, UpdateTenantResponse,
     GetTenantResponse, GetTenantsResponse
 )
-from services.tenant_service import TenantService
-from services.authorization_service import require_authentication
-from services.authentication_service.authentication_interface import UserClaims
+from services.tenant_service.interfaces import ITenantService
+from services.authorization_service import get_user_claims
+from services.authentication_service.interfaces import UserClaims
 from models.roles import UserRole
 from container import Container
-
 # Set up logging
 logger = logging.getLogger(__name__)
-
-async def require_super_user(user_claims: UserClaims = Depends(require_authentication)) -> None:
-    """Dependency that requires SUPER_USER role - applied to all tenant endpoints"""
-    if UserRole.SUPER_USER.value not in (user_claims.roles or []):
-        logger.warning(f"User {user_claims.user_id} attempted tenant operation without SUPER_USER role")
-        raise HTTPException(status_code=403, detail="SUPER_USER role required for tenant operations")
 
 class TenantController:
     """Controller for tenant-related endpoints"""
@@ -29,10 +22,15 @@ class TenantController:
         # Apply SUPER_USER requirement to all routes in this router
         self.router = APIRouter(
             prefix="/api/tenants", 
-            tags=["tenants"],
-            dependencies=[Depends(require_super_user)]  # This applies to ALL routes!
+            tags=["tenants"]
         )
         self._setup_routes()
+    
+    def require_super_user(self, user_roles: list[str]) -> None:
+        """Check if user has SUPER_USER role"""
+        if UserRole.SUPER_USER.value not in user_roles:
+            logger.warning(f"User attempted tenant operation without SUPER_USER role. Roles: {user_roles}")
+            raise HTTPException(status_code=403, detail="SUPER_USER role required for tenant operations")
     
     def _setup_routes(self):
         """Setup the API routes"""
@@ -85,61 +83,202 @@ class TenantController:
             summary="Delete tenant"
         )
     
-    async def create_tenant(self, request: CreateTenantRequest) -> CreateTenantResponse:
+    async def create_tenant(
+        self, 
+        request: CreateTenantRequest,
+        user_claims: UserClaims = Depends(get_user_claims)
+    ) -> CreateTenantResponse:
         """Create a new tenant (SUPER_USER only)"""
         try:
-            logger.info(f"Creating tenant with slug: {request.slug}")
-            tenant_service = self.container.tenant_service()
-            result = await tenant_service.create_tenant(request)
-            logger.info(f"Successfully created tenant with ID: {result.id}")
-            return result
-        except ValueError as e:
-            logger.error(f"Validation error creating tenant: {e}")
-            raise HTTPException(status_code=400, detail=str(e))
+            # Extract values from user_claims
+            user_id = int(user_claims.provider_claims.get('database_id', 0))
+            user_roles = user_claims.roles
+            
+            logger.info(f"Creating tenant with slug: {request.slug} by user {user_id}")
+            
+            # Check if user is super user
+            self.require_super_user(user_roles)
+            
+            # Get tenant service using new container method
+            tenant_service: ITenantService = self.container.tenant_service()
+            
+            # Create the tenant (service now returns DTO directly)
+            created_tenant_dto = await tenant_service.create_tenant(request, user_id)
+            
+            logger.info(f"Successfully created tenant: {created_tenant_dto.id}")
+            return created_tenant_dto
+            
+        except HTTPException:
+            raise
         except Exception as e:
-            logger.error(f"Unexpected error creating tenant: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+            logger.error(f"Error creating tenant: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to create tenant")
 
-    async def get_tenant_by_id(self, tenant_id: int) -> GetTenantResponse:
+    async def get_tenant_by_id(
+        self, 
+        tenant_id: int,
+        user_claims: UserClaims = Depends(get_user_claims)
+    ) -> GetTenantResponse:
         """Get tenant by ID (SUPER_USER only)"""
-        tenant_service = self.container.tenant_service()
-        tenant = await tenant_service.get_tenant_by_id(tenant_id)
-        if not tenant:
-            raise HTTPException(status_code=404, detail="Tenant not found")
-        return tenant
+        try:
+            # Extract values from user_claims
+            user_id = int(user_claims.provider_claims.get('database_id', 0))
+            user_roles = user_claims.roles
+            
+            logger.info(f"Getting tenant {tenant_id} by user {user_id}")
+            
+            # Check if user is super user
+            self.require_super_user(user_roles)
+            
+            # Get tenant service using new container method
+            tenant_service: ITenantService = self.container.tenant_service()
+            
+            # Get the tenant (service now returns DTO directly)
+            tenant_dto = await tenant_service.get_tenant_by_id(tenant_id)
+            
+            if not tenant_dto:
+                raise HTTPException(status_code=404, detail="Tenant not found")
+            
+            logger.info(f"Successfully retrieved tenant {tenant_id}")
+            return tenant_dto
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error getting tenant {tenant_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to get tenant")
 
-    async def get_tenant_by_slug(self, slug: str) -> GetTenantResponse:
+    async def get_tenant_by_slug(
+        self, 
+        slug: str,
+        user_claims: UserClaims = Depends(get_user_claims)
+    ) -> GetTenantResponse:
         """Get tenant by slug (SUPER_USER only)"""
-        tenant_service = self.container.tenant_service()
-        tenant = await tenant_service.get_tenant_by_slug(slug)
-        if not tenant:
-            raise HTTPException(status_code=404, detail="Tenant not found")
-        return tenant
+        try:
+            # Extract values from user_claims
+            user_id = int(user_claims.provider_claims.get('database_id', 0))
+            user_roles = user_claims.roles
+            
+            logger.info(f"Getting tenant by slug '{slug}' by user {user_id}")
+            
+            # Check if user is super user
+            self.require_super_user(user_roles)
+            
+            # Get tenant service using new container method
+            tenant_service: ITenantService = self.container.tenant_service()
+            
+            # Get the tenant (service now returns DTO directly)
+            tenant_dto = await tenant_service.get_tenant_by_slug(slug)
+            
+            if not tenant_dto:
+                raise HTTPException(status_code=404, detail="Tenant not found")
+            
+            logger.info(f"Successfully retrieved tenant by slug '{slug}'")
+            return tenant_dto
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error getting tenant by slug '{slug}': {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to get tenant")
 
     async def get_all_tenants(
         self,
         page: Optional[int] = Query(None, ge=1, description="Page number"),
-        page_size: Optional[int] = Query(None, ge=1, le=100, description="Page size")
+        page_size: Optional[int] = Query(None, ge=1, le=100, description="Page size"),
+        user_claims: UserClaims = Depends(get_user_claims)
     ) -> GetTenantsResponse:
-        """Get all tenants with optional pagination (SUPER_USER only)"""
-        tenant_service = self.container.tenant_service()
-        return await tenant_service.get_all_tenants(page, page_size)
-
-    async def update_tenant(self, tenant_id: int, request: UpdateTenantRequest) -> UpdateTenantResponse:
-        """Update an existing tenant (SUPER_USER only)"""
+        """Get all tenants (SUPER_USER only)"""
         try:
-            logger.info(f"Updating tenant {tenant_id}")
-            tenant_service = self.container.tenant_service()
-            return await tenant_service.update_tenant(tenant_id, request)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+            # Extract values from user_claims
+            user_id = int(user_claims.provider_claims.get('database_id', 0))
+            user_roles = user_claims.roles
+            
+            logger.info(f"Getting all tenants by user {user_id}")
+            
+            # Check if user is super user
+            self.require_super_user(user_roles)
+            
+            # Get tenant service using new container method
+            tenant_service: ITenantService = self.container.tenant_service()
+            
+            # Get all tenants (service now returns DTO directly)
+            tenants_dto = await tenant_service.get_all_tenants(user_id, page, page_size)
+            
+            logger.info(f"Successfully retrieved tenants")
+            return tenants_dto
+            
+        except HTTPException:
+            raise
         except Exception as e:
-            raise HTTPException(status_code=500, detail="Internal server error")
+            logger.error(f"Error getting all tenants: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to get all tenants")
 
-    async def delete_tenant(self, tenant_id: int):
-        """Soft delete a tenant (SUPER_USER only)"""
-        logger.info(f"Deleting tenant {tenant_id}")
-        tenant_service = self.container.tenant_service()
-        success = await tenant_service.delete_tenant(tenant_id)
-        if not success:
-            raise HTTPException(status_code=404, detail="Tenant not found") 
+    async def update_tenant(
+        self, 
+        tenant_id: int, 
+        request: UpdateTenantRequest,
+        user_claims: UserClaims = Depends(get_user_claims)
+    ) -> UpdateTenantResponse:
+        """Update tenant (SUPER_USER only)"""
+        try:
+            # Extract values from user_claims
+            user_id = int(user_claims.provider_claims.get('database_id', 0))
+            user_roles = user_claims.roles
+            
+            logger.info(f"Updating tenant {tenant_id} by user {user_id}")
+            
+            # Check if user is super user
+            self.require_super_user(user_roles)
+            
+            # Get tenant service using new container method
+            tenant_service: ITenantService = self.container.tenant_service()
+            
+            # Update the tenant (service now returns DTO directly)
+            updated_tenant_dto = await tenant_service.update_tenant(tenant_id, request, user_id)
+            
+            if not updated_tenant_dto:
+                raise HTTPException(status_code=404, detail="Tenant not found")
+            
+            logger.info(f"Successfully updated tenant {tenant_id}")
+            return updated_tenant_dto
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error updating tenant {tenant_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to update tenant")
+
+    async def delete_tenant(
+        self, 
+        tenant_id: int,
+        user_claims: UserClaims = Depends(get_user_claims)
+    ):
+        """Delete tenant (SUPER_USER only)"""
+        try:
+            # Extract values from user_claims
+            user_id = int(user_claims.provider_claims.get('database_id', 0))
+            user_roles = user_claims.roles
+            
+            logger.info(f"Deleting tenant {tenant_id} by user {user_id}")
+            
+            # Check if user is super user
+            self.require_super_user(user_roles)
+            
+            # Get tenant service using new container method
+            tenant_service: ITenantService = self.container.tenant_service()
+            
+            # Delete the tenant
+            success = await tenant_service.delete_tenant(tenant_id, user_id)
+            
+            if not success:
+                raise HTTPException(status_code=404, detail="Tenant not found")
+            
+            logger.info(f"Successfully deleted tenant {tenant_id}")
+            return None
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error deleting tenant {tenant_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to delete tenant") 

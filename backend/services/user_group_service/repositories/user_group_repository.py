@@ -46,10 +46,12 @@ class UserGroupRepository:
     async def update(self, user_group: UserGroup) -> UserGroup:
         """Update an existing user group"""
         async for session in database_provider.get_tenant_session(self.tenant_slug):
+            # Merge the user group into the current session
+            merged_user_group = await session.merge(user_group)
             await session.flush()
             await session.commit()  # Commit the transaction
-            await session.refresh(user_group)
-            return user_group
+            await session.refresh(merged_user_group)
+            return merged_user_group
     
     async def delete(self, user_group_id: int) -> bool:
         """Soft delete a user group"""

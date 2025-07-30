@@ -4,11 +4,12 @@ import { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { useAuth } from '@/hooks/useAuth';
 import { useTheme } from '@/components/providers/ThemeProvider';
-import { useAuthenticatedFetch } from '@/hooks/useAuthenticatedFetch';
+import { useApiClient } from '@/lib/api-client';
+import type { CreateDocumentResponse } from '@/types/api';
 
 interface DocumentUploadProps {
   projectId: number;
-  onUploadSuccess?: (document: any) => void;
+  onUploadSuccess?: (document: CreateDocumentResponse) => void;
   onUploadError?: (error: string) => void;
 }
 
@@ -36,9 +37,7 @@ const ALLOWED_EXTENSIONS = Object.values(ALLOWED_FILE_TYPES).flat();
 export default function DocumentUpload({ projectId, onUploadSuccess, onUploadError }: DocumentUploadProps) {
   const { user, isAnalyst, isPM, isAdmin } = useAuth();
   const { theme } = useTheme();
-  const { authenticatedFetch, hasToken } = useAuthenticatedFetch({
-    onError: (error) => setError(error)
-  });
+  const apiClient = useApiClient();
   
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -81,20 +80,8 @@ export default function DocumentUpload({ projectId, onUploadSuccess, onUploadErr
       setError(null);
       setUploadProgress(0);
 
-      // Upload file using the document controller endpoint
-      const formData = new FormData();
-      formData.append('file', file);
-
-      const uploadResponse = await authenticatedFetch(`/api/documents/upload/${projectId}`, {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!uploadResponse.ok) {
-        throw new Error('Failed to upload document');
-      }
-
-      const document = await uploadResponse.json();
+      // Upload file using the typed API client
+      const document = await apiClient.uploadDocument(projectId, file);
       setUploadProgress(100);
 
       onUploadSuccess?.(document);

@@ -8,10 +8,12 @@ from dtos.user_group import (
     UserGroupConverter
 )
 from dtos.user import GetUserResponse, UserConverter
+from models.roles import UserRole
+from ..interfaces import IUserGroupService
 
 logger = logging.getLogger(__name__)
 
-class UserGroupService:
+class UserGroupService(IUserGroupService):
     """Service for user group business logic"""
     
     def __init__(self, tenant_slug: str):
@@ -37,10 +39,17 @@ class UserGroupService:
         user_groups = await self.user_group_repository.find_all()
         return UserGroupConverter.to_get_response_list(user_groups)
     
-    async def create_user_group(self, request: CreateUserGroupRequest, tenant_id: int) -> CreateUserGroupResponse:
-        """Create a new user group with business logic validation"""
+    async def create_user_group(self, request: CreateUserGroupRequest) -> CreateUserGroupResponse:
+        """Create a new user group with business logic validation (admin only)"""
         try:
             logger.info(f"Starting user group creation for name: {request.name}")
+            
+            # Get tenant_id from tenant_slug (service is tenant-aware)
+            from services.tenant_service.repositories.tenant_repository import TenantRepository
+            tenant_repository = TenantRepository()
+            tenant = await tenant_repository.find_by_slug(self.tenant_slug)
+            if not tenant:
+                raise ValueError(f"Tenant '{self.tenant_slug}' not found")
             
             # Business logic: Check if group name already exists in the tenant
             logger.debug("Checking if group name already exists in tenant")
@@ -48,7 +57,7 @@ class UserGroupService:
                 raise ValueError(f"User group with name '{request.name}' already exists in this tenant")
             
             # Create the user group entity
-            user_group = UserGroupConverter.from_create_request(request, tenant_id)
+            user_group = UserGroupConverter.from_create_request(request, tenant.id)
             
             # Create the user group
             logger.debug("Creating user group in repository")
@@ -62,7 +71,7 @@ class UserGroupService:
             raise
     
     async def update_user_group(self, user_group_id: int, request: UpdateUserGroupRequest) -> UpdateUserGroupResponse:
-        """Update an existing user group with business logic validation"""
+        """Update an existing user group with business logic validation (admin only)"""
         try:
             logger.info(f"Starting user group update for ID: {user_group_id}")
             
@@ -90,7 +99,7 @@ class UserGroupService:
             raise
     
     async def delete_user_group(self, user_group_id: int) -> bool:
-        """Soft delete a user group"""
+        """Soft delete a user group (admin only)"""
         try:
             logger.info(f"Starting user group deletion for ID: {user_group_id}")
             
@@ -106,12 +115,13 @@ class UserGroupService:
             logger.error(f"Error in delete_user_group: {e}", exc_info=True)
             raise
     
-    async def get_users_in_group(self, user_group_id: int) -> List[User]:
+    async def get_users_in_group(self, user_group_id: int) -> List[GetUserResponse]:
         """Get all users in a specific user group"""
-        return await self.user_group_repository.get_users_in_group(user_group_id)
+        users = await self.user_group_repository.get_users_in_group(user_group_id)
+        return UserConverter.to_get_response_list(users)
     
     async def add_user_to_group(self, user_id: int, user_group_id: int) -> bool:
-        """Add a user to a user group"""
+        """Add a user to a user group (admin only)"""
         try:
             logger.info(f"Adding user {user_id} to group {user_group_id}")
             
@@ -132,7 +142,7 @@ class UserGroupService:
             raise
     
     async def remove_user_from_group(self, user_id: int, user_group_id: int) -> bool:
-        """Remove a user from a user group"""
+        """Remove a user from a user group (admin only)"""
         try:
             logger.info(f"Removing user {user_id} from group {user_group_id}")
             
@@ -149,29 +159,11 @@ class UserGroupService:
             raise
     
     async def get_user_groups_for_user(self, user_id: int) -> List[GetUserGroupResponse]:
-        """Get all user groups that a user belongs to"""
+        """Get all user groups that a specific user belongs to"""
         user_groups = await self.user_group_repository.get_user_groups_for_user(user_id)
         return UserGroupConverter.to_get_response_list(user_groups)
     
     async def get_users_not_in_group(self, user_group_id: int, search_term: Optional[str] = None) -> List[GetUserResponse]:
-        """Get all users not in a specific group, optionally filtered by search term (ADMIN only)"""
-        try:
-            logger.info(f"Getting users not in group {user_group_id} with search term: {search_term}")
-            
-            # Verify the group exists
-            group = await self.user_group_repository.find_by_id(user_group_id)
-            if not group:
-                raise ValueError(f"User group with ID {user_group_id} not found")
-            
-            # Get users not in the group
-            users = await self.user_group_repository.get_users_not_in_group(user_group_id, search_term)
-            
-            logger.info(f"Found {len(users)} users not in group {user_group_id}")
-            return UserConverter.to_get_response_list(users)
-            
-        except ValueError as e:
-            logger.warning(f"Validation error getting users not in group: {e}")
-            raise
-        except Exception as e:
-            logger.error(f"Unexpected error getting users not in group: {e}", exc_info=True)
-            raise 
+        """Get all users not in a specific user group (for adding users to group)"""
+        users = await self.user_group_repository.get_users_not_in_group(user_group_id, search_term)
+        return UserConverter.to_get_response_list(users) 

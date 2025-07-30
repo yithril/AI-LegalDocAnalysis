@@ -34,8 +34,9 @@ class LoginResponse(BaseModel):
     name: str = Field(..., description="User's full name")
     role: str = Field(..., description="User's role")
     tenant_id: int = Field(..., description="ID of the tenant this user belongs to")
-    access_token: str = Field(..., description="JWT access token")
-    token_type: str = Field(default="bearer", description="Token type")
+    tenant_slug: str = Field(..., description="Slug of the tenant this user belongs to")
+    access_token: Optional[str] = Field(None, description="JWT access token (None for NextAuth.js)")
+    token_type: Optional[str] = Field(None, description="Token type (None for NextAuth.js)")
     
     class Config:
         from_attributes = True 

@@ -1,12 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import Modal from '@/components/shared/Modal'
 import ModalForm from '@/components/shared/ModalForm'
-import { useAuthenticatedFetch } from '@/hooks/useAuthenticatedFetch'
+import { useApiClient } from '@/lib/api-client'
+import type { CreateProjectRequest } from '@/types/api'
 
 const createProjectSchema = z.object({
   name: z.string().min(1, 'Project name is required').max(255, 'Project name must be less than 255 characters'),
@@ -33,31 +34,71 @@ interface CreateProjectModalProps {
 
 export default function CreateProjectModal({ isOpen, onClose, onSuccess }: CreateProjectModalProps) {
   const [isLoading, setIsLoading] = useState(false)
-  const { authenticatedFetch } = useAuthenticatedFetch()
+  const apiClient = useApiClient()
+
+  // Storage key for form persistence
+  const STORAGE_KEY = 'create-project-form-data'
 
   const {
     register,
     handleSubmit,
     formState: { errors },
-    reset
+    reset,
+    watch
   } = useForm<CreateProjectFormData>({
     resolver: zodResolver(createProjectSchema)
   })
+
+  // Watch form values for auto-save
+  const formValues = watch()
+
+  // Auto-save form data to sessionStorage
+  useEffect(() => {
+    if (Object.keys(formValues).length > 0) {
+      const hasData = Object.values(formValues).some(value => value && value !== '')
+      if (hasData) {
+        sessionStorage.setItem(STORAGE_KEY, JSON.stringify(formValues))
+      }
+    }
+  }, [formValues])
+
+  // Load saved form data when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      const savedData = sessionStorage.getItem(STORAGE_KEY)
+      if (savedData) {
+        try {
+          const parsedData = JSON.parse(savedData)
+          reset(parsedData)
+        } catch (error) {
+          console.error('Error loading saved form data:', error)
+          sessionStorage.removeItem(STORAGE_KEY)
+        }
+      }
+    }
+  }, [isOpen, reset])
+
+  const clearSavedData = () => {
+    sessionStorage.removeItem(STORAGE_KEY)
+  }
 
   const onSubmit = async (data: CreateProjectFormData) => {
     try {
       setIsLoading(true)
       
-      const response = await authenticatedFetch('/api/projects/', {
-        method: 'POST',
-        body: JSON.stringify(data)
-      })
-
-      if (response.ok) {
-        reset()
-        onSuccess()
-        onClose()
+      const createRequest: CreateProjectRequest = {
+        name: data.name,
+        description: data.description || '',
+        document_start_date: data.document_start_date,
+        document_end_date: data.document_end_date
       }
+
+      await apiClient.createProject(createRequest)
+
+      clearSavedData()
+      reset()
+      onSuccess()
+      onClose()
     } catch (error) {
       console.error('Error creating project:', error)
     } finally {
@@ -66,6 +107,7 @@ export default function CreateProjectModal({ isOpen, onClose, onSuccess }: Creat
   }
 
   const handleCancel = () => {
+    clearSavedData()
     reset()
     onClose()
   }

@@ -5,23 +5,11 @@ import { useRouter } from 'next/navigation'
 import { useAuth } from '@/hooks/useAuth'
 import { UserRole, isPM, isAdmin } from '@/lib/roles'
 import { useTheme } from '@/components/providers/ThemeProvider'
-import { useAuthenticatedFetch } from '@/hooks/useAuthenticatedFetch'
+import { useApiClient } from '@/lib/api-client'
+import type { GetProjectResponse } from '@/types/api'
 import CreateProjectModal from './projects/CreateProjectModal'
 import EditProjectModal from './projects/EditProjectModal'
-
-// Types
-interface Project {
-  id: number
-  name: string
-  description?: string
-  document_start_date: string
-  document_end_date: string
-  tenant_id: number
-  created_at: string
-  created_by?: string
-  updated_at: string
-  updated_by?: string
-}
+import ViewProjectGroupsModal from './projects/ViewProjectGroupsModal'
 
 interface ProjectListProps {
   className?: string
@@ -46,35 +34,41 @@ export const canDeleteProject = (userRole: string): boolean => {
 
 export default function ProjectList({ className = '' }: ProjectListProps) {
   const router = useRouter()
-  const [projects, setProjects] = useState<Project[]>([])
+  const [projects, setProjects] = useState<GetProjectResponse[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState('')
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
-  const [selectedProject, setSelectedProject] = useState<Project | null>(null)
+  const [isViewGroupsModalOpen, setIsViewGroupsModalOpen] = useState(false)
+  const [selectedProject, setSelectedProject] = useState<GetProjectResponse | null>(null)
   
   const { user, userRole } = useAuth()
   const { theme } = useTheme()
-  const { authenticatedFetch, hasToken } = useAuthenticatedFetch({
-    onError: (error) => setError(error)
-  })
+  const apiClient = useApiClient()
 
   useEffect(() => {
-    if (hasToken) {
+    console.log('🔍 DEBUG: ProjectList useEffect - user:', user)
+    if (user) {
+      console.log('🔍 DEBUG: ProjectList - calling fetchProjects')
       fetchProjects()
+    } else {
+      console.log('🔍 DEBUG: ProjectList - no user, not fetching')
     }
-  }, [hasToken])
+  }, [user])
 
   const fetchProjects = async () => {
+    console.log('🔍 DEBUG: ProjectList fetchProjects called')
     try {
       setIsLoading(true)
-      const response = await authenticatedFetch('/api/projects/')
-      const data = await response.json()
+      console.log('🔍 DEBUG: ProjectList - about to call apiClient.getProjects')
+      const data = await apiClient.getProjects()
+      console.log('🔍 DEBUG: ProjectList - got data from apiClient:', data)
       setProjects(data)
     } catch (err) {
-      console.error('ProjectList: Error in fetchProjects:', err)
+      console.error('❌ DEBUG: ProjectList - Error in fetchProjects:', err)
       setError('Failed to load projects')
     } finally {
+      console.log('🔍 DEBUG: ProjectList - setting loading to false')
       setIsLoading(false)
     }
   }
@@ -85,10 +79,7 @@ export default function ProjectList({ className = '' }: ProjectListProps) {
     }
 
     try {
-      await authenticatedFetch(`/api/projects/${projectId}`, {
-        method: 'DELETE',
-      })
-
+      await apiClient.deleteProject(projectId)
       // Refresh the project list
       fetchProjects()
     } catch (err) {
@@ -105,13 +96,23 @@ export default function ProjectList({ className = '' }: ProjectListProps) {
     fetchProjects()
   }
 
-  const handleEditProject = (project: Project) => {
+  const handleEditProject = (project: GetProjectResponse) => {
     setSelectedProject(project)
     setIsEditModalOpen(true)
   }
 
   const handleCloseEditModal = () => {
     setIsEditModalOpen(false)
+    setSelectedProject(null)
+  }
+
+  const handleViewGroups = (project: GetProjectResponse) => {
+    setSelectedProject(project)
+    setIsViewGroupsModalOpen(true)
+  }
+
+  const handleCloseViewGroupsModal = () => {
+    setIsViewGroupsModalOpen(false)
     setSelectedProject(null)
   }
 
@@ -235,11 +236,11 @@ export default function ProjectList({ className = '' }: ProjectListProps) {
                       </button>
                     )}
 
-                    {/* Manage Groups Button */}
+                    {/* View Groups Button */}
                     {canManageGroups(userRole) && (
                       <button
                         className="text-purple-600 hover:text-purple-900"
-                        onClick={() => {/* TODO: Navigate to manage groups */}}
+                        onClick={() => handleViewGroups(project)}
                       >
                         Groups
                       </button>
@@ -283,6 +284,13 @@ export default function ProjectList({ className = '' }: ProjectListProps) {
         onClose={handleCloseEditModal}
         project={selectedProject}
         onSuccess={handleEditSuccess}
+      />
+
+      {/* View Project Groups Modal */}
+      <ViewProjectGroupsModal
+        isOpen={isViewGroupsModalOpen}
+        onClose={handleCloseViewGroupsModal}
+        project={selectedProject}
       />
     </div>
   )

@@ -3,21 +3,9 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '@/hooks/useAuth'
 import { useTheme } from '@/components/providers/ThemeProvider'
-import { useAuthenticatedFetch } from '@/hooks/useAuthenticatedFetch'
+import { useApiClient } from '@/lib/api-client'
 import { getRoleDisplayName } from '@/lib/roles'
-
-interface User {
-  id: number
-  nextauth_user_id: string
-  email: string
-  name: string
-  role: string
-  tenant_id: number
-  created_at: string
-  created_by?: string
-  updated_at: string
-  updated_by?: string
-}
+import type { GetUserResponse, UpdateRoleRequest } from '@/types/api'
 
 interface UserManagementProps {
   className?: string
@@ -26,9 +14,9 @@ interface UserManagementProps {
 export default function UserManagement({ className = '' }: UserManagementProps) {
   const { isAdmin } = useAuth()
   const { theme } = useTheme()
-  const { authenticatedFetch } = useAuthenticatedFetch()
+  const apiClient = useApiClient()
 
-  const [users, setUsers] = useState<User[]>([])
+  const [users, setUsers] = useState<GetUserResponse[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [updatingUserId, setUpdatingUserId] = useState<number | null>(null)
@@ -48,13 +36,12 @@ export default function UserManagement({ className = '' }: UserManagementProps) 
       setLoading(true)
       setError(null)
 
-      const response = await authenticatedFetch('/api/users/')
-      const data = await response.json()
+      const data = await apiClient.getAllUsers()
       setUsers(data)
       
       // Initialize selected roles with current user roles
       const initialRoles: Record<number, string> = {}
-      data.forEach((user: User) => {
+      data.forEach((user: GetUserResponse) => {
         initialRoles[user.id] = user.role
       })
       setSelectedRoles(initialRoles)
@@ -83,10 +70,11 @@ export default function UserManagement({ className = '' }: UserManagementProps) 
       setUpdatingUserId(userId)
       setError(null)
 
-      await authenticatedFetch(`/api/users/${userId}/role`, {
-        method: 'PATCH',
-        body: JSON.stringify({ role: newRole })
-      })
+      const updateRequest: UpdateRoleRequest = {
+        role: newRole
+      }
+
+      await apiClient.updateUserRole(userId, updateRequest)
 
       // Update the user in the list
       setUsers(prev => prev.map(user => 

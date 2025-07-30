@@ -18,9 +18,9 @@ class ProjectConverter:
             document_end_date=project.document_end_date,
             tenant_id=project.tenant_id,
             created_at=project.created_at.isoformat() if project.created_at else None,
-            created_by=project.created_by,
+            created_by=None,  # Project model doesn't have created_by field
             updated_at=project.updated_at.isoformat() if project.updated_at else None,
-            updated_by=project.updated_by
+            updated_by=None   # Project model doesn't have updated_by field
         )
     
     @staticmethod
@@ -34,9 +34,9 @@ class ProjectConverter:
             document_end_date=project.document_end_date,
             tenant_id=project.tenant_id,
             created_at=project.created_at.isoformat() if project.created_at else None,
-            created_by=project.created_by,
+            created_by=None,  # Project model doesn't have created_by field
             updated_at=project.updated_at.isoformat() if project.updated_at else None,
-            updated_by=project.updated_by
+            updated_by=None   # Project model doesn't have updated_by field
         )
     
     @staticmethod
@@ -50,9 +50,9 @@ class ProjectConverter:
             document_end_date=project.document_end_date,
             tenant_id=project.tenant_id,
             created_at=project.created_at.isoformat() if project.created_at else None,
-            created_by=project.created_by,
+            created_by=None,  # Project model doesn't have created_by field
             updated_at=project.updated_at.isoformat() if project.updated_at else None,
-            updated_by=project.updated_by
+            updated_by=None   # Project model doesn't have updated_by field
         )
     
     @staticmethod

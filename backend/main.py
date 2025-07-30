@@ -1,20 +1,27 @@
 import logging
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+import sys
+import os
+
+# Add the backend directory to the Python path
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 from fastapi.security import HTTPBearer
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from contextlib import asynccontextmanager
 from services.infrastructure import database_provider
-from controllers.tenant import TenantController
-from controllers.user import UserController
-from controllers.project import ProjectController
+from controllers.project.project_controller import ProjectController
+from controllers.user.user_controller import UserController
 from controllers.user_group.user_group_controller import UserGroupController
-from controllers.blob_storage.storage_controller import BlobStorageController
+from controllers.tenant.tenant_controller import TenantController
 from controllers.document.document_controller import DocumentController
 from controllers.auth.auth_controller import AuthController
 from container import Container
 from config import settings
+from services.authorization_service import debug_csrf_middleware
 
 # Configure logging
 logging.basicConfig(
@@ -47,9 +54,10 @@ async def lifespan(app: FastAPI):
 # Define security scheme
 security_scheme = HTTPBearer()
 
+# Create FastAPI app
 app = FastAPI(
-    title="LDA Backend API",
-    description="Legal Document Analysis Backend API",
+    title="Legal Document Analysis API",
+    description="API for legal document analysis and management",
     version="1.0.0",
     lifespan=lifespan,
     openapi_tags=[
@@ -64,26 +72,13 @@ app = FastAPI(
     ]
 )
 
-# CORS middleware - SECURE CONFIGURATION
+# Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",  # Development
-        "https://yourdomain.com",  # Production - REPLACE WITH YOUR DOMAIN
-        "https://www.yourdomain.com",  # Production with www
-    ],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],  # Frontend URL
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allow_headers=[
-        "Authorization",
-        "Content-Type", 
-        "Accept",
-        "Origin",
-        "X-Requested-With",
-        "X-CSRF-Token",
-    ],
-    expose_headers=["Content-Length", "Content-Type"],
-    max_age=3600,  # Cache preflight requests for 1 hour
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Security middleware
@@ -95,6 +90,9 @@ app.add_middleware(
 # Compression middleware
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
+# Debug middleware for CSRF token logging
+app.middleware("http")(debug_csrf_middleware)
+
 # Initialize container
 container = Container()
 container.config.from_dict({
@@ -104,30 +102,60 @@ container.config.from_dict({
     }
 })
 
+# Wire the container to ensure our custom Container class is used
+container.wire(modules=[
+    "controllers.auth.auth_controller",
+    "controllers.user.user_controller", 
+    "controllers.user_group.user_group_controller",
+    "controllers.project.project_controller",
+    "controllers.tenant.tenant_controller",
+    "controllers.document.document_controller"
+])
+
+# Store container in app state for dependency injection
+app.state.container = container
+
 # Initialize controllers
+project_controller = ProjectController(
+    service_factory=container.service_factory()
+)
+user_controller = UserController(
+    service_factory=container.service_factory()
+)
+user_group_controller = UserGroupController(
+    service_factory=container.service_factory()
+)
 tenant_controller = TenantController(container)
-user_controller = UserController(container)
-project_controller = ProjectController(container)
-user_group_controller = UserGroupController(container)
-blob_storage_controller = BlobStorageController(container)
-document_controller = DocumentController(container)
+document_controller = DocumentController(
+    service_factory=container.service_factory()
+)
 auth_controller = AuthController(container)
 
 # Include routers
-app.include_router(tenant_controller.router)
-app.include_router(user_controller.router)
 app.include_router(project_controller.router)
+app.include_router(user_controller.router)
 app.include_router(user_group_controller.router)
-app.include_router(blob_storage_controller.router)
+app.include_router(tenant_controller.router)
 app.include_router(document_controller.router)
 app.include_router(auth_controller.router)
 
 @app.get("/")
 async def root():
-    """Health check endpoint"""
-    return {"message": "LDA Backend API is running"}
+    return {"message": "Legal Document Analysis API"}
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
-    return {"status": "healthy"} 
+    return {"status": "healthy"}
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Global exception handler"""
+    logging.error(f"Unhandled exception: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"}
+    )
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000) 

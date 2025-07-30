@@ -3,21 +3,13 @@
 import { useState, useEffect, useImperativeHandle, forwardRef } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { useTheme } from '@/components/providers/ThemeProvider';
-import { useAuthenticatedFetch } from '@/hooks/useAuthenticatedFetch';
-
-interface UserGroup {
-  id: number;
-  name: string;
-  tenant_id: number;
-  created_at: string;
-  created_by?: string;
-  updated_at: string;
-  updated_by?: string;
-}
+import { useApiClient } from '@/lib/api-client';
+import type { GetUserGroupResponse } from '@/types/api';
 
 interface UserGroupsListProps {
   onViewGroup?: (groupId: number) => void;
-  onEditGroup?: (group: UserGroup) => void;
+  onEditGroup?: (group: GetUserGroupResponse) => void;
+  onManageUsers?: (group: GetUserGroupResponse) => void;
   onCreateGroup?: () => void;
   onRefresh?: () => void;
 }
@@ -25,14 +17,13 @@ interface UserGroupsListProps {
 const UserGroupsList = forwardRef<{ refresh: () => void }, UserGroupsListProps>(({ 
   onViewGroup, 
   onEditGroup, 
+  onManageUsers,
   onCreateGroup
 }, ref) => {
   const { user, isAdmin } = useAuth();
   const { theme } = useTheme();
-  const { authenticatedFetch, hasToken } = useAuthenticatedFetch({
-    onError: (error) => setError(error)
-  });
-  const [groups, setGroups] = useState<UserGroup[]>([]);
+  const apiClient = useApiClient();
+  const [groups, setGroups] = useState<GetUserGroupResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deletingGroupId, setDeletingGroupId] = useState<number | null>(null);
@@ -42,8 +33,7 @@ const UserGroupsList = forwardRef<{ refresh: () => void }, UserGroupsListProps>(
       setLoading(true);
       setError(null);
       
-      const response = await authenticatedFetch('/api/user-groups/');
-      const data = await response.json();
+      const data = await apiClient.getUserGroups();
       setGroups(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch groups');
@@ -60,9 +50,7 @@ const UserGroupsList = forwardRef<{ refresh: () => void }, UserGroupsListProps>(
     try {
       setDeletingGroupId(groupId);
       
-      await authenticatedFetch(`/api/user-groups/${groupId}`, {
-        method: 'DELETE',
-      });
+      await apiClient.deleteUserGroup(groupId);
 
       // Remove the group from the list
       setGroups(groups.filter(group => group.id !== groupId));
@@ -75,10 +63,10 @@ const UserGroupsList = forwardRef<{ refresh: () => void }, UserGroupsListProps>(
 
   // Fetch groups when component mounts or when admin status changes
   useEffect(() => {
-    if (isAdmin && hasToken) {
+    if (isAdmin && user) {
       fetchGroups();
     }
-  }, [isAdmin, hasToken]);
+  }, [isAdmin, user]);
 
   // Expose refresh function to parent
   useImperativeHandle(ref, () => ({
@@ -195,6 +183,12 @@ const UserGroupsList = forwardRef<{ refresh: () => void }, UserGroupsListProps>(
                         className="text-green-600 hover:text-green-900"
                       >
                         Edit
+                      </button>
+                      <button
+                        onClick={() => onManageUsers?.(group)}
+                        className="text-purple-600 hover:text-purple-900"
+                      >
+                        Manage Users
                       </button>
                       <button
                         onClick={() => handleDeleteGroup(group.id)}

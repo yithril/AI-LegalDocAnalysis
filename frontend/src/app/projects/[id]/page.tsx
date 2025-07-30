@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/hooks/useAuth'
 import { useTheme } from '@/components/providers/ThemeProvider'
-import { useAuthenticatedFetch } from '@/hooks/useAuthenticatedFetch'
+import { useApiClient } from '@/lib/api-client'
 import ProjectSidebar from '@/components/projects/ProjectSidebar'
 import ProjectOverview from '@/components/projects/sections/ProjectOverview'
 import ProjectDocuments from '@/components/projects/sections/ProjectDocuments'
@@ -12,28 +12,16 @@ import ProjectActors from '@/components/projects/sections/ProjectActors'
 import ProjectTimeline from '@/components/projects/sections/ProjectTimeline'
 import ProjectAIAssistant from '@/components/projects/sections/ProjectAIAssistant'
 import ProjectAccess from '@/components/projects/ProjectAccess'
-
-interface Project {
-  id: number
-  name: string
-  description?: string
-  document_start_date: string
-  document_end_date: string
-  tenant_id: number
-  created_at: string
-  created_by?: string
-  updated_at: string
-  updated_by?: string
-}
+import type { GetProjectResponse } from '@/types/api'
 
 export default function ProjectDashboard() {
   const params = useParams()
   const router = useRouter()
   const { user } = useAuth()
   const { theme } = useTheme()
-  const { authenticatedFetch } = useAuthenticatedFetch()
+  const apiClient = useApiClient()
   
-  const [project, setProject] = useState<Project | null>(null)
+  const [project, setProject] = useState<GetProjectResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [activeSection, setActiveSection] = useState('overview')
@@ -47,17 +35,21 @@ export default function ProjectDashboard() {
   }, [projectId])
 
   const fetchProject = async () => {
+    console.log('🔍 DEBUG: fetchProject called with projectId:', projectId)
     try {
       setLoading(true)
       setError(null)
       
-      const response = await authenticatedFetch(`/api/projects/${projectId}`)
-      const data = await response.json()
+      console.log('🔍 DEBUG: About to call apiClient.getProject')
+      const data = await apiClient.getProject(parseInt(projectId))
+      console.log('🔍 DEBUG: Got response from apiClient:', data)
       setProject(data)
     } catch (err) {
+      console.error('❌ DEBUG: Error in fetchProject:', err)
       setError('Failed to load project')
       console.error('Error fetching project:', err)
     } finally {
+      console.log('🔍 DEBUG: Setting loading to false')
       setLoading(false)
     }
   }

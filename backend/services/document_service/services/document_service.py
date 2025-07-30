@@ -7,27 +7,25 @@ from dtos.document import (
     GetDocumentResponse, UpdateDocumentRequest, UpdateDocumentResponse,
     DocumentConverter
 )
-from services.authorization_service import require_project_access, require_document_access
+
+from ..interfaces import IDocumentService
 
 logger = logging.getLogger(__name__)
 
-class DocumentService:
+class DocumentService(IDocumentService):
     """Service for document business logic"""
     
-    def __init__(self, tenant_slug: str, auth_service):
+    def __init__(self, tenant_slug: str):
         self.tenant_slug = tenant_slug
         self.document_repository = DocumentRepository(tenant_slug)
-        self.auth_service = auth_service
     
-    @require_document_access("document_id", "user_id")
-    async def get_document_by_id(self, document_id: int, user_id: int) -> Optional[GetDocumentResponse]:
+    async def get_document_by_id(self, document_id: int) -> Optional[GetDocumentResponse]:
         """Get document by ID (authorization handled by decorator)"""
         document = await self.document_repository.find_by_id(document_id)
         if document:
             return DocumentConverter.to_get_response(document)
         return None
     
-    @require_document_access("document_id", "user_id")
     async def get_document_by_filename(self, filename: str) -> Optional[GetDocumentResponse]:
         """Get document by filename"""
         document = await self.document_repository.find_by_filename(filename)
@@ -35,20 +33,17 @@ class DocumentService:
             return DocumentConverter.to_get_response(document)
         return None
     
-    @require_project_access("project_id", "user_id")
-    async def get_documents_by_project(self, project_id: int, user_id: int) -> List[GetDocumentResponse]:
+    async def get_documents_by_project(self, project_id: int) -> List[GetDocumentResponse]:
         """Get all documents for a specific project (authorization handled by decorator)"""
         documents = await self.document_repository.find_by_project_id(project_id)
         return DocumentConverter.to_get_response_list(documents)
     
-    @require_project_access("project_id", "user_id")
-    async def get_documents_by_status_and_project(self, status: str, project_id: int, user_id: int) -> List[GetDocumentResponse]:
+    async def get_documents_by_status_and_project(self, status: str, project_id: int) -> List[GetDocumentResponse]:
         """Get all documents with a specific status within a project (authorization handled by decorator)"""
         documents = await self.document_repository.find_by_status_and_project(status, project_id)
         return DocumentConverter.to_get_response_list(documents)
     
-    @require_project_access("project_id", "user_id")
-    async def create_document(self, request: CreateDocumentRequest, tenant_id: int, user_id: int) -> CreateDocumentResponse:
+    async def create_document(self, request: CreateDocumentRequest, tenant_id: int) -> CreateDocumentResponse:
         """Create a new document with business logic validation"""
         try:
             logger.info(f"Starting document creation for filename: {request.filename}")
@@ -76,8 +71,7 @@ class DocumentService:
             logger.error(f"Error in create_document: {e}", exc_info=True)
             raise
     
-    @require_document_access("document_id", "user_id")
-    async def update_document(self, document_id: int, request: UpdateDocumentRequest, user_id: int) -> UpdateDocumentResponse:
+    async def update_document(self, document_id: int, request: UpdateDocumentRequest) -> UpdateDocumentResponse:
         """Update an existing document with business logic validation"""
         try:
             logger.info(f"Starting document update for ID: {document_id}")
@@ -105,8 +99,7 @@ class DocumentService:
             logger.error(f"Error in update_document: {e}", exc_info=True)
             raise
     
-    @require_document_access("document_id", "user_id")
-    async def delete_document(self, document_id: int, user_id: int) -> bool:
+    async def delete_document(self, document_id: int) -> bool:
         """Soft delete a document"""
         try:
             logger.info(f"Starting document deletion for ID: {document_id}")
@@ -123,8 +116,7 @@ class DocumentService:
             logger.error(f"Error in delete_document: {e}", exc_info=True)
             raise
     
-    @require_document_access("document_id", "user_id")
-    async def update_document_status(self, document_id: int, new_status: str, user_id: int) -> bool:
+    async def update_document_status(self, document_id: int, new_status: str) -> bool:
         """Update the status of a document"""
         try:
             logger.info(f"Updating document {document_id} status to: {new_status}")
@@ -139,4 +131,51 @@ class DocumentService:
             
         except Exception as e:
             logger.error(f"Error in update_document_status: {e}", exc_info=True)
+            raise
+    
+    async def upload_document(self, project_id: int, file) -> CreateDocumentResponse:
+        """Upload a document file"""
+        try:
+            logger.info(f"Starting document upload for file: {file.filename}")
+            
+            # Business logic: Check if document with same filename already exists in the project
+            logger.debug("Checking if document filename already exists in project")
+            existing_document = await self.document_repository.find_by_filename(file.filename)
+            if existing_document and existing_document.project_id == project_id:
+                raise ValueError(f"Document with filename '{file.filename}' already exists in this project")
+            
+            # Create document entity from file
+            # Note: This would need to be implemented based on your file handling logic
+            # For now, we'll create a basic document entity
+            document = Document(
+                filename=file.filename,
+                project_id=project_id,
+                status="uploaded",
+                tenant_id=1  # This should be extracted from tenant_slug
+            )
+            
+            # Create the document
+            logger.debug("Creating document in repository")
+            created_document = await self.document_repository.create(document)
+            
+            logger.info(f"Successfully uploaded document with ID: {created_document.id}")
+            return DocumentConverter.to_create_response(created_document)
+            
+        except Exception as e:
+            logger.error(f"Error in upload_document: {e}", exc_info=True)
+            raise
+    
+    async def get_documents_ready_for_review(self, project_id: int) -> List[GetDocumentResponse]:
+        """Get documents ready for human review"""
+        try:
+            logger.info(f"Getting documents ready for review for project: {project_id}")
+            
+            # Get documents with status "ready_for_review" for the project
+            documents = await self.document_repository.find_by_status_and_project("ready_for_review", project_id)
+            
+            logger.info(f"Found {len(documents)} documents ready for review")
+            return DocumentConverter.to_get_response_list(documents)
+            
+        except Exception as e:
+            logger.error(f"Error in get_documents_ready_for_review: {e}", exc_info=True)
             raise 

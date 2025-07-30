@@ -1,7 +1,7 @@
 from pydantic import BaseModel, Field, validator
 from typing import Optional
 from models.roles import UserRole
-from services.auth_service.password_service import PasswordService
+from services.authentication_service.password_service import PasswordService
 
 class RegisterRequest(BaseModel):
     """Request DTO for user registration"""

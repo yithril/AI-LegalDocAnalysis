@@ -3,18 +3,9 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '@/hooks/useAuth'
 import { useTheme } from '@/components/providers/ThemeProvider'
-import { useAuthenticatedFetch } from '@/hooks/useAuthenticatedFetch'
+import { useApiClient } from '@/lib/api-client'
 import AddGroupModal from './AddGroupModal'
-
-interface UserGroup {
-  id: number
-  name: string
-  tenant_id: number
-  created_at: string
-  created_by?: string
-  updated_at: string
-  updated_by?: string
-}
+import type { GetUserGroupResponse } from '@/types/api'
 
 interface ProjectAccessProps {
   projectId: number
@@ -24,9 +15,9 @@ interface ProjectAccessProps {
 export default function ProjectAccess({ projectId, className = '' }: ProjectAccessProps) {
   const { user, isPM, isAdmin } = useAuth()
   const { theme } = useTheme()
-  const { authenticatedFetch } = useAuthenticatedFetch()
+  const apiClient = useApiClient()
 
-  const [groups, setGroups] = useState<UserGroup[]>([])
+  const [groups, setGroups] = useState<GetUserGroupResponse[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [removingGroupId, setRemovingGroupId] = useState<number | null>(null)
@@ -45,8 +36,7 @@ export default function ProjectAccess({ projectId, className = '' }: ProjectAcce
       setLoading(true)
       setError(null)
 
-      const response = await authenticatedFetch(`/api/projects/${projectId}/groups`)
-      const data = await response.json()
+      const data = await apiClient.getUserGroupsForProject(projectId)
       setGroups(data)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch project groups')
@@ -63,9 +53,7 @@ export default function ProjectAccess({ projectId, className = '' }: ProjectAcce
     try {
       setRemovingGroupId(groupId)
 
-      await authenticatedFetch(`/api/projects/${projectId}/groups/${groupId}`, {
-        method: 'DELETE',
-      })
+      await apiClient.removeUserGroupFromProject(projectId, groupId)
 
       // Remove the group from the list
       setGroups(groups.filter(group => group.id !== groupId))

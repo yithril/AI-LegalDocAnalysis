@@ -1,5 +1,5 @@
 import logging
-from fastapi import APIRouter, HTTPException, Depends, Path, Query
+from fastapi import APIRouter, HTTPException, Depends, Query, Path
 from typing import List, Optional
 from dtos.user_group import (
     CreateUserGroupRequest, CreateUserGroupResponse,
@@ -7,22 +7,18 @@ from dtos.user_group import (
     GetUserGroupResponse
 )
 from dtos.user import GetUserResponse
-from services.user_group_service import UserGroupService
-from services.authorization_service import (
-    extract_user_id_from_jwt,
-    extract_tenant_slug_from_jwt,
-    extract_user_roles_from_jwt
-)
-from models.roles import UserRole
-from container import Container
-
+from services.authorization_service import get_user_claims
+from services.authentication_service.interfaces import UserClaims
+from services.user_group_service.interfaces import IUserGroupService
+from services.security_service.interfaces import ISecurityOrchestrator
+from services.service_factory import ServiceFactory
 logger = logging.getLogger(__name__)
 
 class UserGroupController:
     """Controller for user group-related endpoints"""
     
-    def __init__(self, container: Container):
-        self.container = container
+    def __init__(self, service_factory: ServiceFactory):
+        self.service_factory = service_factory
         self.router = APIRouter(prefix="/api/user-groups", tags=["user-groups"])
         self._setup_routes()
     
@@ -106,287 +102,337 @@ class UserGroupController:
             summary="Get all groups for a specific user"
         )
         
-        # Get users not in a group (for typeahead search)
+        # Get users not in group
         self.router.add_api_route(
-            "/{user_group_id}/available-users",
+            "/{user_group_id}/users/available",
             self.get_users_not_in_group,
             methods=["GET"],
             response_model=List[GetUserResponse],
-            summary="Get users not in a group (for adding members)"
+            summary="Get users available to add to group"
         )
-    
-    async def _require_admin_role(
-        self,
-        user_roles: List[str] = Depends(extract_user_roles_from_jwt)
-    ) -> None:
-        """Dependency that requires ADMIN role for user group operations"""
-        if UserRole.ADMIN.value not in user_roles:
-            logger.warning(f"User attempted user group operation without ADMIN role. Roles: {user_roles}")
-            raise HTTPException(status_code=403, detail="ADMIN role required for user group operations")
     
     async def create_user_group(
         self, 
         request: CreateUserGroupRequest,
-        user_id: int = Depends(extract_user_id_from_jwt),
-        tenant_slug: str = Depends(extract_tenant_slug_from_jwt),
-        user_roles: List[str] = Depends(extract_user_roles_from_jwt)
+        user_claims: UserClaims = Depends(get_user_claims)
     ) -> CreateUserGroupResponse:
         """Create a new user group (ADMIN only)"""
         try:
-            # Check admin role
-            await self._require_admin_role(user_roles)
+            # Extract values from user_claims
+            user_id = int(user_claims.provider_claims.get('database_id', 0))
+            tenant_slug = user_claims.tenant_slug
             
-            logger.info(f"Creating user group '{request.name}' by user: {user_id}")
+            logger.info(f"Creating user group '{request.name}' for user {user_id} in tenant {tenant_slug}")
             
-            user_group_service = self.container.user_group_service(tenant_slug=tenant_slug)
+            # Create tenant-aware security orchestrator
+            security_orchestrator = self.service_factory.create_security_orchestrator(tenant_slug)
             
-            # Get tenant ID from tenant service
-            tenant_service = self.container.tenant_service()
-            tenant = await tenant_service.get_tenant_by_slug(tenant_slug)
-            if not tenant:
-                raise HTTPException(status_code=404, detail="Tenant not found")
-            tenant_id = tenant.id
+            # Check authorization - only ADMIN can create user groups
+            if not await security_orchestrator.require_permission(user_id, "group:manage"):
+                raise HTTPException(status_code=403, detail="Admin privileges required to create user groups")
             
-            result = await user_group_service.create_user_group(request, tenant_id)
-            logger.info(f"Successfully created user group: {result.id}")
-            return result
+            # Get user group service from factory
+            user_group_service = self.service_factory.create_user_group_service(tenant_slug)
             
-        except ValueError as e:
-            logger.warning(f"Validation error creating user group: {e}")
-            raise HTTPException(status_code=400, detail=str(e))
-        except Exception as e:
-            logger.error(f"Unexpected error creating user group: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail="Internal server error")
-    
-    async def get_all_user_groups(
-        self,
-        tenant_slug: str = Depends(extract_tenant_slug_from_jwt),
-        user_roles: List[str] = Depends(extract_user_roles_from_jwt)
-    ) -> List[GetUserGroupResponse]:
-        """Get all user groups (ADMIN only)"""
-        try:
-            # Check admin role
-            await self._require_admin_role(user_roles)
+            # Create the user group (service handles tenant_id internally)
+            created_user_group_dto = await user_group_service.create_user_group(request=request)
             
-            user_group_service = self.container.user_group_service(tenant_slug=tenant_slug)
-            user_groups = await user_group_service.get_all_user_groups()
-            logger.info(f"Retrieved {len(user_groups)} user groups")
-            return user_groups
-            
-        except Exception as e:
-            logger.error(f"Unexpected error getting user groups: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail="Internal server error")
-    
-    async def get_user_group_by_id(
-        self,
-        user_group_id: int = Path(..., description="User Group ID"),
-        tenant_slug: str = Depends(extract_tenant_slug_from_jwt),
-        user_roles: List[str] = Depends(extract_user_roles_from_jwt)
-    ) -> GetUserGroupResponse:
-        """Get user group by ID (ADMIN only)"""
-        try:
-            # Check admin role
-            await self._require_admin_role(user_roles)
-            
-            user_group_service = self.container.user_group_service(tenant_slug=tenant_slug)
-            user_group = await user_group_service.get_user_group_by_id(user_group_id)
-            
-            if not user_group:
-                raise HTTPException(status_code=404, detail="User group not found")
-            
-            return user_group
+            logger.info(f"Successfully created user group {created_user_group_dto.id}")
+            return created_user_group_dto
             
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Unexpected error getting user group {user_group_id}: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail="Internal server error")
-    
+            logger.error(f"Error creating user group: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to create user group")
+
+    async def get_all_user_groups(
+        self,
+        user_claims: UserClaims = Depends(get_user_claims)
+    ) -> List[GetUserGroupResponse]:
+        """Get all user groups"""
+        try:
+            # Extract values from user_claims
+            user_id = int(user_claims.provider_claims.get('database_id', 0))
+            tenant_slug = user_claims.tenant_slug
+            
+            logger.info(f"Getting all user groups for user {user_id} in tenant {tenant_slug}")
+            
+            # Get user group service from factory
+            user_group_service = self.service_factory.create_user_group_service(tenant_slug)
+            
+            # Get all user groups (service now returns DTOs directly)
+            user_group_dtos = await user_group_service.get_all_user_groups()
+            
+            logger.info(f"Found {len(user_group_dtos)} user groups for user {user_id}")
+            return user_group_dtos
+            
+        except Exception as e:
+            logger.error(f"Error getting all user groups: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to get all user groups")
+
+    async def get_user_group_by_id(
+        self,
+        user_group_id: int = Path(..., description="User Group ID"),
+        user_claims: UserClaims = Depends(get_user_claims)
+    ) -> GetUserGroupResponse:
+        """Get user group by ID"""
+        try:
+            # Extract values from user_claims
+            user_id = int(user_claims.provider_claims.get('database_id', 0))
+            tenant_slug = user_claims.tenant_slug
+            
+            logger.info(f"Getting user group {user_group_id} for user {user_id} in tenant {tenant_slug}")
+            
+            # Get user group service from factory
+            user_group_service = self.service_factory.create_user_group_service(tenant_slug)
+            
+            # Get the user group (service now returns DTO directly)
+            user_group_dto = await user_group_service.get_user_group_by_id(user_group_id)
+            
+            if not user_group_dto:
+                raise HTTPException(status_code=404, detail="User group not found")
+            
+            logger.info(f"Successfully retrieved user group {user_group_id}")
+            return user_group_dto
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error getting user group {user_group_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to get user group")
+
     async def update_user_group(
         self,
         user_group_id: int = Path(..., description="User Group ID"),
         request: UpdateUserGroupRequest = None,
-        tenant_slug: str = Depends(extract_tenant_slug_from_jwt),
-        user_roles: List[str] = Depends(extract_user_roles_from_jwt)
+        user_claims: UserClaims = Depends(get_user_claims)
     ) -> UpdateUserGroupResponse:
         """Update a user group (ADMIN only)"""
         try:
-            # Check admin role
-            await self._require_admin_role(user_roles)
+            # Extract values from user_claims
+            user_id = int(user_claims.provider_claims.get('database_id', 0))
+            tenant_slug = user_claims.tenant_slug
             
-            logger.info(f"Updating user group {user_group_id} by user with roles: {user_roles}")
+            logger.info(f"Updating user group {user_group_id} for user {user_id} in tenant {tenant_slug}")
             
-            user_group_service = self.container.user_group_service(tenant_slug=tenant_slug)
-            result = await user_group_service.update_user_group(user_group_id, request)
+            # Create tenant-aware security orchestrator
+            security_orchestrator = self.service_factory.create_security_orchestrator(tenant_slug)
             
-            if not result:
-                raise HTTPException(status_code=404, detail="User group not found")
+            # Check authorization - only ADMIN can update user groups
+            if not await security_orchestrator.require_permission(user_id, "group:manage"):
+                raise HTTPException(status_code=403, detail="Admin privileges required to update user groups")
             
-            logger.info(f"Successfully updated user group: {user_group_id}")
-            return result
+            # Get user group service from factory
+            user_group_service = self.service_factory.create_user_group_service(tenant_slug)
+            
+            # Update the user group (service now returns DTO directly)
+            updated_user_group_dto = await user_group_service.update_user_group(user_group_id=user_group_id, request=request)
+            
+            logger.info(f"Successfully updated user group {user_group_id}")
+            return updated_user_group_dto
             
         except HTTPException:
             raise
-        except ValueError as e:
-            logger.warning(f"Validation error updating user group {user_group_id}: {e}")
-            raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
-            logger.error(f"Unexpected error updating user group {user_group_id}: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail="Internal server error")
-    
+            logger.error(f"Error updating user group {user_group_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to update user group")
+
     async def delete_user_group(
         self,
         user_group_id: int = Path(..., description="User Group ID"),
-        tenant_slug: str = Depends(extract_tenant_slug_from_jwt),
-        user_roles: List[str] = Depends(extract_user_roles_from_jwt)
+        user_claims: UserClaims = Depends(get_user_claims)
     ) -> dict:
         """Delete a user group (ADMIN only)"""
         try:
-            # Check admin role
-            await self._require_admin_role(user_roles)
+            # Extract values from user_claims
+            user_id = int(user_claims.provider_claims.get('database_id', 0))
+            tenant_slug = user_claims.tenant_slug
             
-            logger.info(f"Deleting user group {user_group_id} by user with roles: {user_roles}")
+            logger.info(f"Deleting user group {user_group_id} for user {user_id} in tenant {tenant_slug}")
             
-            user_group_service = self.container.user_group_service(tenant_slug=tenant_slug)
-            success = await user_group_service.delete_user_group(user_group_id)
+            # Create tenant-aware security orchestrator
+            security_orchestrator = self.service_factory.create_security_orchestrator(tenant_slug)
             
-            if not success:
-                raise HTTPException(status_code=404, detail="User group not found")
+            # Check authorization - only ADMIN can delete user groups
+            if not await security_orchestrator.require_permission(user_id, "group:manage"):
+                raise HTTPException(status_code=403, detail="Admin privileges required to delete user groups")
             
-            logger.info(f"Successfully deleted user group: {user_group_id}")
+            # Get user group service from factory
+            user_group_service = self.service_factory.create_user_group_service(tenant_slug)
+            
+            # Delete the user group
+            await user_group_service.delete_user_group(user_group_id=user_group_id)
+            
+            logger.info(f"Successfully deleted user group {user_group_id}")
             return {"message": "User group deleted successfully"}
             
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Unexpected error deleting user group {user_group_id}: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail="Internal server error")
-    
+            logger.error(f"Error deleting user group {user_group_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to delete user group")
+
     async def add_user_to_group(
         self, 
         user_group_id: int = Path(..., description="User Group ID"),
         user_id: int = Path(..., description="User ID"),
-        admin_user_id: int = Depends(extract_user_id_from_jwt),
-        tenant_slug: str = Depends(extract_tenant_slug_from_jwt),
-        user_roles: List[str] = Depends(extract_user_roles_from_jwt)
+        user_claims: UserClaims = Depends(get_user_claims)
     ) -> dict:
         """Add user to group (ADMIN only)"""
         try:
-            # Check admin role
-            await self._require_admin_role(user_roles)
+            # Extract values from user_claims
+            admin_user_id = int(user_claims.provider_claims.get('database_id', 0))
+            tenant_slug = user_claims.tenant_slug
             
-            logger.info(f"Adding user {user_id} to group {user_group_id} by admin: {admin_user_id}")
+            logger.info(f"Adding user {user_id} to group {user_group_id} by admin {admin_user_id}")
             
-            user_group_service = self.container.user_group_service(tenant_slug=tenant_slug)
-            success = await user_group_service.add_user_to_group(user_id, user_group_id)
+            # Create tenant-aware security orchestrator
+            security_orchestrator = self.service_factory.create_security_orchestrator(tenant_slug)
             
-            if success:
-                logger.info(f"Successfully added user {user_id} to group {user_group_id}")
-                return {"message": "User added to group successfully"}
-            else:
-                return {"message": "User was already in group"}
+            # Check authorization - only ADMIN can manage user groups
+            if not await security_orchestrator.require_permission(admin_user_id, "group:manage"):
+                raise HTTPException(status_code=403, detail="Admin privileges required to manage user groups")
             
+            # Get user group service from factory
+            user_group_service = self.service_factory.create_user_group_service(tenant_slug)
+            
+            # Add user to group
+            await user_group_service.add_user_to_group(user_id=user_id, user_group_id=user_group_id)
+            
+            logger.info(f"Successfully added user {user_id} to group {user_group_id}")
+            return {"message": "User added to group successfully"}
+            
+        except HTTPException:
+            raise
         except Exception as e:
-            logger.error(f"Unexpected error adding user {user_id} to group {user_group_id}: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail="Internal server error")
-    
+            logger.error(f"Error adding user {user_id} to group {user_group_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to add user to group")
+
     async def remove_user_from_group(
         self, 
         user_group_id: int = Path(..., description="User Group ID"),
         user_id: int = Path(..., description="User ID"),
-        admin_user_id: int = Depends(extract_user_id_from_jwt),
-        tenant_slug: str = Depends(extract_tenant_slug_from_jwt),
-        user_roles: List[str] = Depends(extract_user_roles_from_jwt)
+        user_claims: UserClaims = Depends(get_user_claims)
     ) -> dict:
         """Remove user from group (ADMIN only)"""
         try:
-            # Check admin role
-            await self._require_admin_role(user_roles)
+            # Extract values from user_claims
+            admin_user_id = int(user_claims.provider_claims.get('database_id', 0))
+            tenant_slug = user_claims.tenant_slug
             
-            logger.info(f"Removing user {user_id} from group {user_group_id} by admin: {admin_user_id}")
+            logger.info(f"Removing user {user_id} from group {user_group_id} by admin {admin_user_id}")
             
-            user_group_service = self.container.user_group_service(tenant_slug=tenant_slug)
-            success = await user_group_service.remove_user_from_group(user_id, user_group_id)
+            # Create tenant-aware security orchestrator
+            security_orchestrator = self.service_factory.create_security_orchestrator(tenant_slug)
             
-            if success:
-                logger.info(f"Successfully removed user {user_id} from group {user_group_id}")
-                return {"message": "User removed from group successfully"}
-            else:
-                return {"message": "User was not in group"}
+            # Check authorization - only ADMIN can manage user groups
+            if not await security_orchestrator.require_permission(admin_user_id, "group:manage"):
+                raise HTTPException(status_code=403, detail="Admin privileges required to manage user groups")
             
+            # Get user group service from factory
+            user_group_service = self.service_factory.create_user_group_service(tenant_slug)
+            
+            # Remove user from group
+            await user_group_service.remove_user_from_group(user_id=user_id, user_group_id=user_group_id)
+            
+            logger.info(f"Successfully removed user {user_id} from group {user_group_id}")
+            return {"message": "User removed from group successfully"}
+            
+        except HTTPException:
+            raise
         except Exception as e:
-            logger.error(f"Unexpected error removing user {user_id} from group {user_group_id}: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail="Internal server error")
-    
+            logger.error(f"Error removing user {user_id} from group {user_group_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to remove user from group")
+
     async def get_users_in_group(
         self,
         user_group_id: int = Path(..., description="User Group ID"),
-        tenant_slug: str = Depends(extract_tenant_slug_from_jwt),
-        user_roles: List[str] = Depends(extract_user_roles_from_jwt)
-    ) -> dict:
-        """Get all users in a group (ADMIN only)"""
+        user_claims: UserClaims = Depends(get_user_claims)
+    ) -> List[GetUserResponse]:
+        """Get all users in a group"""
         try:
-            # Check admin role
-            await self._require_admin_role(user_roles)
+            # Extract values from user_claims
+            user_id = int(user_claims.provider_claims.get('database_id', 0))
+            tenant_slug = user_claims.tenant_slug
             
-            logger.info(f"Getting users in group {user_group_id}")
+            logger.info(f"Getting users in group {user_group_id} for user {user_id}")
             
-            user_group_service = self.container.user_group_service(tenant_slug=tenant_slug)
-            users = await user_group_service.get_users_in_group(user_group_id)
+            # Get user group service from factory
+            user_group_service = self.service_factory.create_user_group_service(tenant_slug)
             
-            logger.info(f"Retrieved {len(users)} users from group {user_group_id}")
-            return {"users": users}
+            # Get users in group (service now returns DTOs directly)
+            user_dtos = await user_group_service.get_users_in_group(user_group_id)
             
+            logger.info(f"Found {len(user_dtos)} users in group {user_group_id}")
+            return user_dtos
+            
+        except HTTPException:
+            raise
         except Exception as e:
-            logger.error(f"Unexpected error getting users in group {user_group_id}: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail="Internal server error")
-    
+            logger.error(f"Error getting users in group {user_group_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to get users in group")
+
     async def get_user_groups_for_user(
         self,
         user_id: int = Path(..., description="User ID"),
-        tenant_slug: str = Depends(extract_tenant_slug_from_jwt),
-        user_roles: List[str] = Depends(extract_user_roles_from_jwt)
+        user_claims: UserClaims = Depends(get_user_claims)
     ) -> List[GetUserGroupResponse]:
-        """Get all groups for a specific user (ADMIN only)"""
+        """Get all groups for a specific user"""
         try:
-            # Check admin role
-            await self._require_admin_role(user_roles)
+            # Extract values from user_claims
+            current_user_id = int(user_claims.provider_claims.get('database_id', 0))
+            tenant_slug = user_claims.tenant_slug
             
-            logger.info(f"Getting groups for user {user_id}")
+            logger.info(f"Getting groups for user {user_id} by user {current_user_id}")
             
-            user_group_service = self.container.user_group_service(tenant_slug=tenant_slug)
-            user_groups = await user_group_service.get_user_groups_for_user(user_id)
+            # Get user group service from factory
+            user_group_service = self.service_factory.create_user_group_service(tenant_slug)
             
-            logger.info(f"Retrieved {len(user_groups)} groups for user {user_id}")
-            return user_groups
+            # Get user groups for user (service now returns DTOs directly)
+            user_group_dtos = await user_group_service.get_user_groups_for_user(user_id=user_id)
             
+            logger.info(f"Found {len(user_group_dtos)} groups for user {user_id}")
+            return user_group_dtos
+            
+        except HTTPException:
+            raise
         except Exception as e:
-            logger.error(f"Unexpected error getting groups for user {user_id}: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail="Internal server error")
-    
+            logger.error(f"Error getting groups for user {user_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to get groups for user")
+
     async def get_users_not_in_group(
         self,
         user_group_id: int = Path(..., description="User Group ID"),
         search_term: Optional[str] = Query(None, description="Search term for filtering users"),
-        tenant_slug: str = Depends(extract_tenant_slug_from_jwt),
-        user_roles: List[str] = Depends(extract_user_roles_from_jwt)
+        user_claims: UserClaims = Depends(get_user_claims)
     ) -> List[GetUserResponse]:
-        """Get users not in a group for typeahead search (ADMIN only)"""
+        """Get users available to add to group (ADMIN only)"""
         try:
-            # Check admin role
-            await self._require_admin_role(user_roles)
+            # Extract values from user_claims
+            user_id = int(user_claims.provider_claims.get('database_id', 0))
+            tenant_slug = user_claims.tenant_slug
             
-            logger.info(f"Getting users not in group {user_group_id} with search term: {search_term}")
+            logger.info(f"Getting users not in group {user_group_id} for user {user_id}")
             
-            user_group_service = self.container.user_group_service(tenant_slug=tenant_slug)
-            users = await user_group_service.get_users_not_in_group(user_group_id, search_term)
+            # Create tenant-aware security orchestrator
+            security_orchestrator = self.service_factory.create_security_orchestrator(tenant_slug)
             
-            logger.info(f"Retrieved {len(users)} users not in group {user_group_id}")
-            return users
+            # Check authorization - only ADMIN can manage user groups
+            if not await security_orchestrator.require_permission(user_id, "group:manage"):
+                raise HTTPException(status_code=403, detail="Admin privileges required to manage user groups")
             
-        except ValueError as e:
-            logger.warning(f"Validation error getting users not in group: {e}")
-            raise HTTPException(status_code=400, detail=str(e))
+            # Get user group service from factory
+            user_group_service = self.service_factory.create_user_group_service(tenant_slug)
+            
+            # Get users not in group (service now returns DTOs directly)
+            user_dtos = await user_group_service.get_users_not_in_group(user_group_id=user_group_id, search_term=search_term)
+            
+            logger.info(f"Found {len(user_dtos)} users not in group {user_group_id}")
+            return user_dtos
+            
+        except HTTPException:
+            raise
         except Exception as e:
-            logger.error(f"Unexpected error getting users not in group {user_group_id}: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail="Internal server error") 
+            logger.error(f"Error getting users not in group {user_group_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to get users not in group") 

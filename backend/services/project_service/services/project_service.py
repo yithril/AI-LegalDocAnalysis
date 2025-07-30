@@ -7,18 +7,18 @@ from dtos.project import (
     GetProjectResponse, UpdateProjectRequest, UpdateProjectResponse,
     ProjectConverter
 )
-from services.authorization_service import require_role
+from dtos.user_group import GetUserGroupResponse, UserGroupConverter
 from models.roles import UserRole
+from ..interfaces import IProjectService
 
 logger = logging.getLogger(__name__)
 
-class ProjectService:
+class ProjectService(IProjectService):
     """Service for project business logic"""
     
-    def __init__(self, tenant_slug: str, auth_service=None):
+    def __init__(self, tenant_slug: str):
         self.tenant_slug = tenant_slug
         self.project_repository = ProjectRepository(tenant_slug)
-        self.auth_service = auth_service
     
     async def get_project_by_id(self, project_id: int) -> Optional[GetProjectResponse]:
         """Get project by ID"""
@@ -39,11 +39,19 @@ class ProjectService:
         projects = await self.project_repository.find_all()
         return ProjectConverter.to_get_response_list(projects)
     
-    @require_role([UserRole.ADMIN, UserRole.PROJECT_MANAGER], "user_id")
-    async def create_project(self, request: CreateProjectRequest, tenant_id: int, user_id: int) -> CreateProjectResponse:
+    async def create_project(self, request: CreateProjectRequest, tenant_slug: str) -> CreateProjectResponse:
         """Create a new project with business logic validation"""
         try:
             logger.info(f"Starting project creation for name: {request.name}")
+            
+            # Get tenant_id from tenant_slug using the tenant repository
+            from services.tenant_service.repositories.tenant_repository import TenantRepository
+            tenant_repository = TenantRepository()
+            tenant = await tenant_repository.find_by_slug(tenant_slug)
+            if not tenant:
+                raise ValueError(f"Tenant with slug '{tenant_slug}' not found")
+            
+            tenant_id = tenant.id
             
             # Business logic: Check if project name already exists in the tenant
             logger.debug("Checking if project name already exists in tenant")
@@ -69,8 +77,7 @@ class ProjectService:
             logger.error(f"Error in create_project: {e}", exc_info=True)
             raise
     
-    @require_role([UserRole.ADMIN, UserRole.PROJECT_MANAGER], "user_id")
-    async def update_project(self, project_id: int, request: UpdateProjectRequest, user_id: int) -> UpdateProjectResponse:
+    async def update_project(self, project_id: int, request: UpdateProjectRequest) -> UpdateProjectResponse:
         """Update an existing project with business logic validation"""
         try:
             logger.info(f"Starting project update for ID: {project_id}")
@@ -103,8 +110,7 @@ class ProjectService:
             logger.error(f"Error in update_project: {e}", exc_info=True)
             raise
     
-    @require_role([UserRole.ADMIN, UserRole.PROJECT_MANAGER], "user_id")
-    async def delete_project(self, project_id: int, user_id: int) -> bool:
+    async def delete_project(self, project_id: int) -> bool:
         """Soft delete a project"""
         try:
             logger.info(f"Starting project deletion for ID: {project_id}")
@@ -121,12 +127,12 @@ class ProjectService:
             logger.error(f"Error in delete_project: {e}", exc_info=True)
             raise
     
-    async def get_user_groups_for_project(self, project_id: int) -> List[UserGroup]:
+    async def get_user_groups_for_project(self, project_id: int) -> List[GetUserGroupResponse]:
         """Get all user groups assigned to a specific project"""
-        return await self.project_repository.get_user_groups_for_project(project_id)
+        user_groups = await self.project_repository.get_user_groups_for_project(project_id)
+        return UserGroupConverter.to_get_response_list(user_groups)
     
-    @require_role([UserRole.ADMIN, UserRole.PROJECT_MANAGER], "user_id")
-    async def add_user_group_to_project(self, project_id: int, user_group_id: int, user_id: int) -> bool:
+    async def add_user_group_to_project(self, project_id: int, user_group_id: int) -> bool:
         """Add a user group to a project"""
         try:
             logger.info(f"Adding user group {user_group_id} to project {project_id}")
@@ -147,8 +153,7 @@ class ProjectService:
             logger.error(f"Error in add_user_group_to_project: {e}", exc_info=True)
             raise
     
-    @require_role([UserRole.ADMIN, UserRole.PROJECT_MANAGER], "user_id")
-    async def remove_user_group_from_project(self, project_id: int, user_group_id: int, user_id: int) -> bool:
+    async def remove_user_group_from_project(self, project_id: int, user_group_id: int) -> bool:
         """Remove a user group from a project"""
         try:
             logger.info(f"Removing user group {user_group_id} from project {project_id}")
@@ -175,6 +180,7 @@ class ProjectService:
         projects = await self.project_repository.get_projects_for_user(user_id)
         return ProjectConverter.to_get_response_list(projects)
     
-    async def get_user_groups_not_in_project(self, project_id: int, search_term: Optional[str] = None) -> List[UserGroup]:
+    async def get_user_groups_not_in_project(self, project_id: int, search_term: Optional[str] = None) -> List[GetUserGroupResponse]:
         """Get all user groups that are NOT assigned to a specific project, optionally filtered by search term"""
-        return await self.project_repository.get_user_groups_not_in_project(project_id, search_term) 
+        user_groups = await self.project_repository.get_user_groups_not_in_project(project_id, search_term)
+        return UserGroupConverter.to_get_response_list(user_groups) 

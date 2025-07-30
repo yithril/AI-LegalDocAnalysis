@@ -3,19 +3,10 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '@/hooks/useAuth'
 import { useTheme } from '@/components/providers/ThemeProvider'
-import { useAuthenticatedFetch } from '@/hooks/useAuthenticatedFetch'
+import { useApiClient } from '@/lib/api-client'
 import Modal from '@/components/shared/Modal'
 import ModalForm from '@/components/shared/ModalForm'
-
-interface UserGroup {
-  id: number
-  name: string
-  tenant_id: number
-  created_at: string
-  created_by?: string
-  updated_at: string
-  updated_by?: string
-}
+import type { GetUserGroupResponse } from '@/types/api'
 
 interface AddGroupModalProps {
   isOpen: boolean
@@ -27,9 +18,9 @@ interface AddGroupModalProps {
 export default function AddGroupModal({ isOpen, onClose, onSuccess, projectId }: AddGroupModalProps) {
   const { isPM, isAdmin } = useAuth()
   const { theme } = useTheme()
-  const { authenticatedFetch } = useAuthenticatedFetch()
+  const apiClient = useApiClient()
 
-  const [availableGroups, setAvailableGroups] = useState<UserGroup[]>([])
+  const [availableGroups, setAvailableGroups] = useState<GetUserGroupResponse[]>([])
   const [loading, setLoading] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
   const [isSearching, setIsSearching] = useState(false)
@@ -55,12 +46,7 @@ export default function AddGroupModal({ isOpen, onClose, onSuccess, projectId }:
       setLoading(true)
       setError(null)
 
-      const url = search 
-        ? `/api/projects/${projectId}/available-groups?search_term=${encodeURIComponent(search)}`
-        : `/api/projects/${projectId}/available-groups`
-
-      const response = await authenticatedFetch(url)
-      const data = await response.json()
+      const data = await apiClient.getUserGroupsNotInProject(projectId, search || '')
       setAvailableGroups(data)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch available groups')
@@ -90,9 +76,7 @@ export default function AddGroupModal({ isOpen, onClose, onSuccess, projectId }:
       setLoading(true)
       setError(null)
 
-      await authenticatedFetch(`/api/projects/${projectId}/groups/${selectedGroupId}`, {
-        method: 'POST',
-      })
+      await apiClient.addUserGroupToProject(projectId, selectedGroupId)
 
       onSuccess()
       onClose()

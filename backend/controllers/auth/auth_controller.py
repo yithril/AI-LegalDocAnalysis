@@ -1,13 +1,7 @@
 import logging
-from fastapi import APIRouter, HTTPException, Depends
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from typing import Optional
+from fastapi import APIRouter, HTTPException
 from dtos.auth.login import LoginRequest, LoginResponse
 from dtos.auth.register import RegisterRequest, RegisterResponse
-from services.authentication_service import ApiKeyAuth
-from services.user_service import UserService
-from services.auth_service.password_service import PasswordService
-from services.tenant_service import TenantService
 from container import Container
 
 logger = logging.getLogger(__name__)
@@ -18,8 +12,6 @@ class AuthController:
     def __init__(self, container: Container):
         self.container = container
         self.router = APIRouter(prefix="/api/auth", tags=["authentication"])
-        self.password_service = PasswordService()
-        self.auth_service = container.auth_service()
         self._setup_routes()
     
     def _setup_routes(self):
@@ -44,57 +36,29 @@ class AuthController:
         """
         Login with email and password
         
-        Validates credentials and returns a JWT token if successful.
+        Validates credentials and returns user data for NextAuth.js to create its own JWT token.
         """
         try:
             logger.info(f"Login attempt for email: {request.email} in tenant: {request.tenant_slug}")
             
-            # Validate tenant exists
-            tenant_service = self.container.tenant_service()
-            tenant = await tenant_service.get_tenant_by_slug(request.tenant_slug)
-            if not tenant:
-                raise HTTPException(status_code=400, detail=f"Tenant '{request.tenant_slug}' not found")
+            # Get security orchestrator for the specific tenant
+            security = self.container.security_orchestrator(tenant_slug=request.tenant_slug)
             
-            # Get user service for the specific tenant
-            user_service = self.container.user_service(tenant_slug=request.tenant_slug)
+            # Validate tenant access first
+            if not await security.validate_user_tenant_access(request.email, request.tenant_slug):
+                raise HTTPException(status_code=401, detail="Invalid tenant or user not found")
             
-            # Find user by email
-            user = await user_service.get_user_by_email(request.email)
-            if not user:
-                logger.warning(f"Login failed: User not found for email {request.email}")
-                raise HTTPException(status_code=401, detail="Invalid credentials")
-            
-            # Check if user has password (local auth user)
-            if not user.password_hash:
-                logger.warning(f"Login failed: User {request.email} has no password (NextAuth.js user)")
-                raise HTTPException(status_code=401, detail="Invalid credentials")
-            
-            # Verify password
-            if not self.password_service.verify_password(request.password, user.password_hash):
-                logger.warning(f"Login failed: Invalid password for user {request.email}")
-                raise HTTPException(status_code=401, detail="Invalid credentials")
-            
-            # Generate JWT token
-            token_data = {
-                "user_id": user.id,
-                "email": user.email,
-                "role": user.role,
-                "tenant_id": user.tenant_id,
-                "tenant_slug": request.tenant_slug
-            }
-            access_token = self.auth_service.create_access_token(token_data)
-            
-            logger.info(f"Successful login for user {user.id}")
-            
-            return LoginResponse(
-                id=user.id,
-                email=user.email,
-                name=user.name,
-                role=user.role,
-                tenant_id=user.tenant_id,
-                access_token=access_token,
-                token_type="bearer"
+            # Authenticate user through orchestrator
+            login_response = await security.authenticate_user(
+                email=request.email,
+                password=request.password,
+                tenant_slug=request.tenant_slug
             )
+            
+            if not login_response:
+                raise HTTPException(status_code=401, detail="Invalid credentials")
+            
+            return login_response
             
         except HTTPException:
             raise
@@ -114,49 +78,21 @@ class AuthController:
         try:
             logger.info(f"Registration attempt for email: {request.email} in tenant: {request.tenant_slug}")
             
-            # Validate tenant exists
-            tenant_service = self.container.tenant_service()
-            tenant = await tenant_service.get_tenant_by_slug(request.tenant_slug)
-            if not tenant:
-                raise HTTPException(status_code=400, detail=f"Tenant '{request.tenant_slug}' not found")
+            # Get security orchestrator for the specific tenant
+            security = self.container.security_orchestrator(tenant_slug=request.tenant_slug)
             
-            # Get user service for the specific tenant
-            user_service = self.container.user_service(tenant_slug=request.tenant_slug)
-            
-            # Check if user already exists
-            existing_user = await user_service.get_user_by_email(request.email)
-            if existing_user:
-                logger.warning(f"Registration failed: User already exists with email {request.email}")
-                raise HTTPException(status_code=400, detail="User with this email already exists")
-            
-            # Hash the password
-            password_hash = self.password_service.hash_password(request.password)
-            
-            # Create user entity
-            from models.tenant.user import User
-            from models.roles import UserRole
-            
-            user = User(
+            # Register user through orchestrator
+            register_response = await security.register_user(
                 email=request.email,
+                password=request.password,
                 name=request.name,
-                password_hash=password_hash,
-                role=UserRole.VIEWER.value,
-                tenant_id=tenant.id
+                tenant_slug=request.tenant_slug
             )
             
-            # Save user to database
-            created_user = await user_service.user_repository.create(user)
+            if not register_response:
+                raise HTTPException(status_code=400, detail="Registration failed")
             
-            logger.info(f"Successfully registered user {created_user.id}")
-            
-            return RegisterResponse(
-                id=created_user.id,
-                email=created_user.email,
-                name=created_user.name,
-                role=created_user.role,
-                tenant_id=created_user.tenant_id,
-                created_at=created_user.created_at.isoformat() if created_user.created_at else None
-            )
+            return register_response
             
         except HTTPException:
             raise

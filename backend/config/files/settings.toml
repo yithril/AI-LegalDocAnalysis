@@ -47,4 +47,9 @@ host = "0.0.0.0"
 
 [default.services.blob_service]
 port = 8004
-host = "0.0.0.0" 
+host = "0.0.0.0"
+
+[default.nextauth]
+secret = "your-nextauth-secret"
+issuer = "nextauth"
+url = "http://localhost:3000" 

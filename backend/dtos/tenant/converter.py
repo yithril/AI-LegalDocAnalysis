@@ -10,7 +10,7 @@ class TenantConverter:
     """Converter for transforming between Tenant models and DTOs"""
     
     @staticmethod
-    def model_to_create_response_dto(tenant: Tenant) -> CreateTenantResponse:
+    def to_create_response(tenant: Tenant) -> CreateTenantResponse:
         """Convert Tenant model to CreateTenantResponse DTO"""
         # Convert JSON string back to dictionary
         metadata = None
@@ -35,7 +35,7 @@ class TenantConverter:
         )
     
     @staticmethod
-    def model_to_update_response_dto(tenant: Tenant) -> UpdateTenantResponse:
+    def to_update_response(tenant: Tenant) -> UpdateTenantResponse:
         """Convert Tenant model to UpdateTenantResponse DTO"""
         # Convert JSON string back to dictionary
         metadata = None
@@ -60,7 +60,7 @@ class TenantConverter:
         )
     
     @staticmethod
-    def model_to_get_response_dto(tenant: Tenant) -> GetTenantResponse:
+    def to_get_response(tenant: Tenant) -> GetTenantResponse:
         """Convert Tenant model to GetTenantResponse DTO"""
         # Convert JSON string back to dictionary
         metadata = None
@@ -85,7 +85,7 @@ class TenantConverter:
         )
     
     @staticmethod
-    def model_to_list_item_dto(tenant: Tenant) -> TenantListItem:
+    def to_list_item(tenant: Tenant) -> TenantListItem:
         """Convert Tenant model to TenantListItem DTO (simplified)"""
         return TenantListItem(
             id=tenant.id,
@@ -96,9 +96,9 @@ class TenantConverter:
         )
     
     @staticmethod
-    def models_to_get_list_response_dto(tenants: List[Tenant], total_count: int, page: int = None, page_size: int = None) -> GetTenantsResponse:
+    def to_get_response_list(tenants: List[Tenant], total_count: int, page: int = None, page_size: int = None) -> GetTenantsResponse:
         """Convert list of Tenant models to GetTenantsResponse DTO"""
-        tenant_items = [TenantConverter.model_to_list_item_dto(tenant) for tenant in tenants]
+        tenant_items = [TenantConverter.to_list_item(tenant) for tenant in tenants]
         return GetTenantsResponse(
             tenants=tenant_items,
             total_count=total_count,
@@ -107,7 +107,7 @@ class TenantConverter:
         )
     
     @staticmethod
-    def create_request_dto_to_model(dto: CreateTenantRequest) -> Tenant:
+    def from_create_request(dto: CreateTenantRequest) -> Tenant:
         """Convert CreateTenantRequest DTO to Tenant model"""
         return Tenant(
             slug=dto.slug,
@@ -120,21 +120,19 @@ class TenantConverter:
         )
     
     @staticmethod
-    def update_request_dto_to_model_updates(dto: UpdateTenantRequest) -> dict:
-        """Convert UpdateTenantRequest DTO to dictionary of fields to update"""
-        updates = {}
-        
+    def from_update_request(tenant: Tenant, dto: UpdateTenantRequest) -> Tenant:
+        """Update existing Tenant model with UpdateTenantRequest DTO data"""
         if dto.name is not None:
-            updates['name'] = dto.name
+            tenant.name = dto.name
         if dto.database_url is not None:
-            updates['database_url'] = dto.database_url
+            tenant.database_url = dto.database_url
         if dto.pinecone_index is not None:
-            updates['pinecone_index'] = dto.pinecone_index
+            tenant.pinecone_index = dto.pinecone_index
         if dto.pinecone_region is not None:
-            updates['pinecone_region'] = dto.pinecone_region
+            tenant.pinecone_region = dto.pinecone_region
         if dto.blob_storage_connection is not None:
-            updates['blob_storage_connection'] = dto.blob_storage_connection
+            tenant.blob_storage_connection = dto.blob_storage_connection
         if dto.metadata is not None:
-            updates['tenant_metadata'] = json.dumps(dto.metadata)
+            tenant.tenant_metadata = json.dumps(dto.metadata)
         
-        return updates 
+        return tenant 

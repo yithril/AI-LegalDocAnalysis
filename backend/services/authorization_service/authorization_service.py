@@ -1,265 +1,136 @@
 import logging
-from typing import List, Optional
-from fastapi import HTTPException, Header
-from services.infrastructure import database_provider
-from models.tenant import User, UserGroup, Project, ProjectUserGroup, UserUserGroup
-from sqlalchemy import select
+from typing import Optional, List
+from fastapi import HTTPException
 from models.roles import UserRole
+from .interfaces import IAuthorizationService
 
 logger = logging.getLogger(__name__)
 
-class AuthorizationService:
+class AuthorizationService(IAuthorizationService):
     """Service for handling authorization logic across the application"""
     
     def __init__(self, tenant_slug: str):
         self.tenant_slug = tenant_slug
-    
-    async def user_has_project_access(self, user_id: int, project_id: int) -> bool:
-        """Check if user has access to project through their groups"""
+
+    async def user_has_project_access(self, user_id: int, project_id: int, user_service=None) -> bool:
+        """Check if user has access to a specific project"""
         try:
-            logger.debug(f"Checking project access for user {user_id} to project {project_id}")
+            # Import here to avoid circular imports
+            from services.project_service import ProjectService
+            from services.user_service import UserService
             
-            async for session in database_provider.get_tenant_session(self.tenant_slug):
-                # Get user's groups
-                result = await session.execute(
-                    select(UserGroup)
-                    .join(UserUserGroup, UserGroup.id == UserUserGroup.user_group_id)
-                    .where(UserUserGroup.user_id == user_id, UserGroup.is_active == True)
-                )
-                user_groups = result.scalars().all()
-                
-                # Get project's assigned groups
-                result = await session.execute(
-                    select(UserGroup)
-                    .join(ProjectUserGroup, UserGroup.id == ProjectUserGroup.user_group_id)
-                    .where(ProjectUserGroup.project_id == project_id, UserGroup.is_active == True)
-                )
-                project_groups = result.scalars().all()
-                
-                # Check for intersection
-                user_group_ids = {group.id for group in user_groups}
-                project_group_ids = {group.id for group in project_groups}
-                
-                has_access = bool(user_group_ids & project_group_ids)
-                logger.debug(f"User {user_id} {'has' if has_access else 'does not have'} access to project {project_id}")
-                
-                return has_access
+            # First, check if user is admin or project manager - they have access to all projects
+            user_service = UserService(self.tenant_slug)
+            user = await user_service.get_user_by_database_id(user_id)
+            if user:
+                user_role = UserRole.from_string(user.role)
+                if user_role in [UserRole.ADMIN, UserRole.PROJECT_MANAGER]:
+                    logger.info(f"Admin/PM {user_id} has automatic access to all projects")
+                    return True
+            
+            # For regular users, check if they have access through their groups
+            project_service = ProjectService(self.tenant_slug)
+            user_projects = await project_service.get_projects_for_user(user_id)
+            
+            # Check if project is in user's project list
+            return any(project.id == project_id for project in user_projects)
             
         except Exception as e:
-            logger.error(f"Error checking project access for user {user_id} to project {project_id}: {e}")
+            logger.error(f"Error checking project access for user {user_id}: {e}")
             return False
-    
+
     async def user_has_document_access(self, user_id: int, document_id: int, document_service) -> bool:
-        """Check if user has access to document through its project"""
+        """Check if user has access to a specific document"""
         try:
-            logger.debug(f"Checking document access for user {user_id} to document {document_id}")
-            
-            # Get the document to find its project_id
+            # Get document
             document = await document_service.get_document_by_id(document_id)
             if not document:
-                logger.warning(f"Document {document_id} not found")
                 return False
             
-            # Check project access
-            has_access = await self.user_has_project_access(user_id, document.project_id)
-            logger.debug(f"User {user_id} {'has' if has_access else 'does not have'} access to document {document_id}")
-            
-            return has_access
+            # Check if user has access to the document's project
+            return await self.user_has_project_access(user_id, document.project_id)
             
         except Exception as e:
-            logger.error(f"Error checking document access for user {user_id} to document {document_id}: {e}")
+            logger.error(f"Error checking document access for user {user_id}: {e}")
             return False
-    
-    async def user_has_role(self, user_id: int, required_roles: List[UserRole]) -> bool:
-        """Check if user has one of the required roles"""
+
+    async def user_has_role(self, user_id: int, required_roles: List[UserRole], user_service=None, tenant_slug: str = None) -> bool:
+        """Check if user has any of the required roles"""
         try:
-            logger.debug(f"Checking role access for user {user_id} with required roles: {[role.value for role in required_roles]}")
+            # Import here to avoid circular imports
+            from services.user_service import UserService
             
-            async for session in database_provider.get_tenant_session(self.tenant_slug):
-                # Get user's role
-                result = await session.execute(
-                    select(User).where(User.id == user_id, User.is_active == True)
-                )
-                user = result.scalar_one_or_none()
-                
-                if not user:
-                    logger.warning(f"User {user_id} not found")
-                    return False
-                
-                user_role = UserRole.from_string(user.role)
-                has_role = user_role in required_roles
-                
-                logger.debug(f"User {user_id} has role {user_role.value}, required: {[role.value for role in required_roles]}, access: {has_role}")
-                
-                return has_role
+            # Use provided tenant_slug or fall back to instance tenant_slug
+            actual_tenant_slug = tenant_slug or self.tenant_slug
+            
+            # Use provided user_service or create new one
+            if user_service is None:
+                user_service = UserService(actual_tenant_slug)
+            
+            logger.info(f"=== DEBUG: Authorization Service ===")
+            logger.info(f"Checking role for user_id: {user_id} in tenant: {actual_tenant_slug}")
+            logger.info(f"Required roles: {[role.value for role in required_roles]}")
+            
+            user = await user_service.get_user_by_database_id(user_id)
+            
+            if not user:
+                logger.warning(f"User {user_id} not found in tenant {actual_tenant_slug}")
+                return False
+            
+            logger.info(f"Found user in database: {user}")
+            logger.info(f"User role from database: {user.role}")
+            
+            user_role = UserRole.from_string(user.role)
+            logger.info(f"Converted to UserRole enum: {user_role}")
+            logger.info(f"User role in required roles: {user_role in required_roles}")
+            logger.info(f"=== END DEBUG ===")
+            
+            return user_role in required_roles
             
         except Exception as e:
-            logger.error(f"Error checking role access for user {user_id}: {e}")
+            logger.error(f"Error checking role for user {user_id}: {e}")
             return False
-    
+
     async def user_can_create_projects(self, user_id: int) -> bool:
         """Check if user can create projects (admin or project manager)"""
         return await self.user_has_role(user_id, [UserRole.ADMIN, UserRole.PROJECT_MANAGER])
-    
+
     async def user_can_manage_users(self, user_id: int) -> bool:
         """Check if user can manage users (admin only)"""
         return await self.user_has_role(user_id, [UserRole.ADMIN])
-    
+
     async def user_can_manage_groups(self, user_id: int) -> bool:
         """Check if user can manage groups (admin or project manager)"""
         return await self.user_has_role(user_id, [UserRole.ADMIN, UserRole.PROJECT_MANAGER])
-    
-    @staticmethod
-    async def extract_user_id_from_jwt(authorization: Optional[str] = Header(None)) -> int:
-        """
-        Extract user ID from JWT token in Authorization header
-        
-        Args:
-            authorization: The Authorization header value (Bearer <token>)
-            
-        Returns:
-            The user ID from the JWT token
-            
-        Raises:
-            HTTPException: If token is invalid or missing
-        """
-        if not authorization:
-            raise HTTPException(status_code=401, detail="Authorization header required")
-        
-        if not authorization.startswith("Bearer "):
-            raise HTTPException(status_code=401, detail="Invalid authorization format")
-        
-        token = authorization[7:]  # Remove "Bearer "
-        if not token:
-            raise HTTPException(status_code=401, detail="Token required")
-        
-        try:
-            # Import here to avoid circular imports
-            from config import settings
-            import jwt
-            
-            # Decode the token using NextAuth.js secret
-            payload = jwt.decode(
-                token,
-                settings.nextauth.secret,
-                algorithms=['HS256']
-            )
-            
-            # Extract user ID from NextAuth.js token
-            user_id = int(payload.get('sub', 0))
-            logger.debug(f"Successfully extracted user ID from JWT: {user_id}")
-            return user_id
-            
-        except jwt.ExpiredSignatureError:
-            logger.warning("JWT token has expired")
-            raise HTTPException(status_code=401, detail="Token has expired")
-        except jwt.InvalidTokenError as e:
-            logger.error(f"Invalid JWT token: {e}")
-            raise HTTPException(status_code=401, detail="Invalid token")
-        except Exception as e:
-            logger.error(f"Error extracting user ID from JWT: {e}")
-            raise HTTPException(status_code=401, detail="Invalid token")
-    
-    @staticmethod
-    async def extract_tenant_slug_from_jwt(authorization: Optional[str] = Header(None)) -> str:
-        """
-        Extract tenant slug from JWT token in Authorization header
-        
-        Args:
-            authorization: The Authorization header value (Bearer <token>)
-            
-        Returns:
-            The tenant slug from the JWT token
-            
-        Raises:
-            HTTPException: If token is invalid or missing
-        """
-        if not authorization:
-            raise HTTPException(status_code=401, detail="Authorization header required")
-        
-        if not authorization.startswith("Bearer "):
-            raise HTTPException(status_code=401, detail="Invalid authorization format")
-        
-        token = authorization[7:]  # Remove "Bearer "
-        if not token:
-            raise HTTPException(status_code=401, detail="Token required")
-        
-        try:
-            # Import here to avoid circular imports
-            from config import settings
-            import jwt
-            
-            # Decode the token using NextAuth.js secret
-            payload = jwt.decode(
-                token,
-                settings.nextauth.secret,
-                algorithms=['HS256']
-            )
-            
-            # Extract tenant slug from NextAuth.js token
-            tenant_slug = payload.get('tenant_slug')
-            if not tenant_slug:
-                logger.error("No tenant slug found in JWT token")
-                raise HTTPException(status_code=401, detail="Token missing tenant information")
-            
-            logger.debug(f"Successfully extracted tenant slug from JWT: {tenant_slug}")
-            return tenant_slug
-            
-        except jwt.ExpiredSignatureError:
-            logger.warning("JWT token has expired")
-            raise HTTPException(status_code=401, detail="Token has expired")
-        except jwt.InvalidTokenError as e:
-            logger.error(f"Invalid JWT token: {e}")
-            raise HTTPException(status_code=401, detail="Invalid token")
-        except Exception as e:
-            logger.error(f"Error extracting tenant slug from JWT: {e}")
-            raise HTTPException(status_code=401, detail="Invalid token")
-    
-    @staticmethod
-    async def extract_claims_from_jwt(authorization: Optional[str] = Header(None)) -> dict:
-        """
-        Extract all claims from JWT token in Authorization header
-        
-        Args:
-            authorization: The Authorization header value (Bearer <token>)
-            
-        Returns:
-            Dictionary containing all JWT claims
-            
-        Raises:
-            HTTPException: If token is invalid or missing
-        """
-        if not authorization:
-            raise HTTPException(status_code=401, detail="Authorization header required")
-        
-        if not authorization.startswith("Bearer "):
-            raise HTTPException(status_code=401, detail="Invalid authorization format")
-        
-        token = authorization[7:]  # Remove "Bearer "
-        if not token:
-            raise HTTPException(status_code=401, detail="Token required")
-        
-        try:
-            # Import here to avoid circular imports
-            from config import settings
-            import jwt
-            
-            # Decode the token using NextAuth.js secret
-            payload = jwt.decode(
-                token,
-                settings.nextauth.secret,
-                algorithms=['HS256']
-            )
-            
-            logger.debug(f"Successfully extracted claims from JWT for user: {payload.get('sub')}")
-            return payload
-            
-        except jwt.ExpiredSignatureError:
-            logger.warning("JWT token has expired")
-            raise HTTPException(status_code=401, detail="Token has expired")
-        except jwt.InvalidTokenError as e:
-            logger.error(f"Invalid JWT token: {e}")
-            raise HTTPException(status_code=401, detail="Invalid token")
-        except Exception as e:
-            logger.error(f"Error extracting claims from JWT: {e}")
-            raise HTTPException(status_code=401, detail="Invalid token") 
+
+    async def user_can_manage_tenants(self, user_id: int) -> bool:
+        """Check if user can manage tenants (super user only)"""
+        return await self.user_has_role(user_id, [UserRole.SUPER_USER])
+
+    async def user_can_access_project(self, user_id: int, project_id: int) -> bool:
+        """Check if user has access to a specific project"""
+        return await self.user_has_project_access(user_id, project_id)
+
+    async def user_can_access_document(self, user_id: int, document_id: int, document_service) -> bool:
+        """Check if user has access to a specific document"""
+        return await self.user_has_document_access(user_id, document_id, document_service)
+
+    async def user_can_create_documents(self, user_id: int, project_id: int) -> bool:
+        """Check if user can create documents in a project (has project access)"""
+        return await self.user_has_project_access(user_id, project_id)
+
+    async def user_can_update_documents(self, user_id: int, document_id: int, document_service) -> bool:
+        """Check if user can update documents (has document access)"""
+        return await self.user_has_document_access(user_id, document_id, document_service)
+
+    async def user_can_delete_documents(self, user_id: int, document_id: int, document_service) -> bool:
+        """Check if user can delete documents (has document access)"""
+        return await self.user_has_document_access(user_id, document_id, document_service)
+
+    async def user_can_upload_documents(self, user_id: int, project_id: int) -> bool:
+        """Check if user can upload documents to a project (has project access)"""
+        return await self.user_has_project_access(user_id, project_id)
+
+    async def user_can_view_documents(self, user_id: int, project_id: int) -> bool:
+        """Check if user can view documents in a project (has project access)"""
+        return await self.user_has_project_access(user_id, project_id) 

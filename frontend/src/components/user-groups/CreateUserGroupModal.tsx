@@ -3,15 +3,9 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { useTheme } from '@/components/providers/ThemeProvider';
-import { useAuthenticatedFetch } from '@/hooks/useAuthenticatedFetch';
+import { useApiClient } from '@/lib/api-client';
 import ModalForm from '@/components/shared/ModalForm';
-
-interface User {
-  id: number;
-  name: string;
-  email: string;
-  role: string;
-}
+import type { CreateUserGroupRequest } from '@/types/api';
 
 interface CreateUserGroupModalProps {
   isOpen: boolean;
@@ -22,60 +16,41 @@ interface CreateUserGroupModalProps {
 export default function CreateUserGroupModal({ isOpen, onClose, onSuccess }: CreateUserGroupModalProps) {
   const { user } = useAuth();
   const { theme } = useTheme();
-  const { authenticatedFetch, hasToken } = useAuthenticatedFetch({
-    onError: (error) => setError(error)
-  });
+  const apiClient = useApiClient();
+  
+  // Storage key for form persistence
+  const STORAGE_KEY = 'create-user-group-form-data';
   
   const [groupName, setGroupName] = useState('');
-  const [selectedUserIds, setSelectedUserIds] = useState<number[]>([]);
-  const [availableUsers, setAvailableUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [isSearching, setIsSearching] = useState(false);
-  const [showTypeahead, setShowTypeahead] = useState(false);
 
+  // Auto-save form data to sessionStorage
   useEffect(() => {
-    if (isOpen && hasToken) {
-      fetchAvailableUsers();
+    if (groupName) {
+      const formData = { groupName };
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(formData));
     }
-  }, [isOpen, hasToken]);
+  }, [groupName]);
 
-  const fetchAvailableUsers = async (search?: string) => {
-    try {
-      setLoading(true);
-      setError(null);
-      
-      // For creating a new group, we can get all users since no group exists yet
-      const response = await authenticatedFetch('/api/users/');
-      const data = await response.json();
-      
-      // Filter by search term if provided
-      let filteredUsers = data;
-      if (search) {
-        filteredUsers = data.filter((user: User) => 
-          user.name.toLowerCase().includes(search.toLowerCase()) ||
-          user.email.toLowerCase().includes(search.toLowerCase())
-        );
+  // Load saved form data when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      const savedData = sessionStorage.getItem(STORAGE_KEY);
+      if (savedData) {
+        try {
+          const parsedData = JSON.parse(savedData);
+          setGroupName(parsedData.groupName || '');
+        } catch (error) {
+          console.error('Error loading saved form data:', error);
+          sessionStorage.removeItem(STORAGE_KEY);
+        }
       }
-      
-      setAvailableUsers(filteredUsers);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch users');
-    } finally {
-      setLoading(false);
     }
-  };
+  }, [isOpen]);
 
-  const handleSearch = async (term: string) => {
-    setSearchTerm(term);
-    setIsSearching(true);
-    
-    // Debounce the search
-    setTimeout(async () => {
-      await fetchAvailableUsers(term);
-      setIsSearching(false);
-    }, 300);
+  const clearSavedData = () => {
+    sessionStorage.removeItem(STORAGE_KEY);
   };
 
   const handleCreateGroup = async () => {
@@ -84,45 +59,19 @@ export default function CreateUserGroupModal({ isOpen, onClose, onSuccess }: Cre
       return;
     }
 
-    if (selectedUserIds.length === 0) {
-      setError('Please select at least one user');
-      return;
-    }
-
     try {
       setLoading(true);
       setError(null);
 
-      // Create the group
-      const createResponse = await authenticatedFetch('/api/user-groups/', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          name: groupName.trim()
-        }),
-      });
+      const createRequest: CreateUserGroupRequest = {
+        name: groupName.trim()
+      };
 
-      if (!createResponse.ok) {
-        throw new Error('Failed to create group');
-      }
+      await apiClient.createUserGroup(createRequest);
 
-      const groupData = await createResponse.json();
-      const groupId = groupData.id;
-
-      // Add selected users to the group
-      for (const userId of selectedUserIds) {
-        await authenticatedFetch(`/api/user-groups/${groupId}/users/${userId}`, {
-          method: 'POST',
-        });
-      }
-
-      // Reset form
+      // Clear saved data and reset form
+      clearSavedData();
       setGroupName('');
-      setSelectedUserIds([]);
-      setSearchTerm('');
-      setShowTypeahead(false);
       
       onSuccess();
       onClose();
@@ -134,29 +83,17 @@ export default function CreateUserGroupModal({ isOpen, onClose, onSuccess }: Cre
   };
 
   const handleCancel = () => {
+    clearSavedData();
     setGroupName('');
-    setSelectedUserIds([]);
-    setSearchTerm('');
-    setShowTypeahead(false);
     setError(null);
     onClose();
   };
-
-  const handleUserToggle = (userId: number) => {
-    setSelectedUserIds(prev => 
-      prev.includes(userId) 
-        ? prev.filter(id => id !== userId)
-        : [...prev, userId]
-    );
-  };
-
-  const selectedUsers = availableUsers.filter(user => selectedUserIds.includes(user.id));
 
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+      <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
         <div className="p-6">
           <h2 
             className="text-xl font-semibold mb-4"
@@ -184,136 +121,6 @@ export default function CreateUserGroupModal({ isOpen, onClose, onSuccess }: Cre
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                   required
                 />
-              </div>
-
-              {/* User Selection */}
-              <div className="space-y-4">
-                {/* Initial Dropdown (first 10 users) */}
-                {!showTypeahead && availableUsers.length > 0 && (
-                  <div>
-                    <label className="block text-sm font-medium mb-2">
-                      Select Users
-                    </label>
-                    <div className="max-h-60 overflow-y-auto border border-gray-300 rounded-md">
-                      {availableUsers.slice(0, 10).map((user) => (
-                        <button
-                          key={user.id}
-                          type="button"
-                          onClick={() => handleUserToggle(user.id)}
-                          className={`w-full text-left px-4 py-2 hover:bg-gray-50 border-b border-gray-100 last:border-b-0 ${
-                            selectedUserIds.includes(user.id) ? 'bg-blue-50 text-blue-700' : ''
-                          }`}
-                        >
-                          <div className="font-medium">{user.name}</div>
-                          <div className="text-sm text-gray-500">{user.email}</div>
-                        </button>
-                      ))}
-                    </div>
-                    
-                    {/* Show "Search more" if there are more than 10 users */}
-                    {availableUsers.length > 10 && (
-                      <button
-                        type="button"
-                        onClick={() => setShowTypeahead(true)}
-                        className="mt-2 text-sm text-blue-600 hover:text-blue-800"
-                      >
-                        Search more users...
-                      </button>
-                    )}
-                  </div>
-                )}
-
-                {/* Typeahead Search */}
-                {showTypeahead && (
-                  <div>
-                    <label className="block text-sm font-medium mb-2">
-                      Search Users
-                    </label>
-                    <input
-                      type="text"
-                      value={searchTerm}
-                      onChange={(e) => handleSearch(e.target.value)}
-                      placeholder="Type to search users..."
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                    
-                    {isSearching && (
-                      <div className="mt-2 text-sm text-gray-500">Searching...</div>
-                    )}
-                    
-                    {!isSearching && (
-                      <div className="mt-2 max-h-60 overflow-y-auto border border-gray-300 rounded-md">
-                        {availableUsers.length > 0 ? (
-                          availableUsers.map((user) => (
-                            <button
-                              key={user.id}
-                              type="button"
-                              onClick={() => handleUserToggle(user.id)}
-                              className={`w-full text-left px-4 py-2 hover:bg-gray-50 border-b border-gray-100 last:border-b-0 ${
-                                selectedUserIds.includes(user.id) ? 'bg-blue-50 text-blue-700' : ''
-                              }`}
-                            >
-                              <div className="font-medium">{user.name}</div>
-                              <div className="text-sm text-gray-500">{user.email}</div>
-                            </button>
-                          ))
-                        ) : (
-                          <div className="px-4 py-2 text-gray-500">No users found</div>
-                        )}
-                      </div>
-                    )}
-                    
-                    <button
-                      type="button"
-                      onClick={() => setShowTypeahead(false)}
-                      className="mt-2 text-sm text-gray-600 hover:text-gray-800"
-                    >
-                      ← Back to dropdown
-                    </button>
-                  </div>
-                )}
-
-                {/* Show dropdown if no typeahead and no users in dropdown */}
-                {!showTypeahead && availableUsers.length === 0 && !loading && (
-                  <div>
-                    <label className="block text-sm font-medium mb-2">
-                      Search Users
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => setShowTypeahead(true)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md text-left text-gray-500 hover:bg-gray-50"
-                    >
-                      Click to search users...
-                    </button>
-                  </div>
-                )}
-
-                {/* Selected Users Display */}
-                {selectedUsers.length > 0 && (
-                  <div className="mt-4">
-                    <label className="block text-sm font-medium mb-2">
-                      Selected Users ({selectedUsers.length})
-                    </label>
-                    <div className="max-h-40 overflow-y-auto border border-gray-300 rounded-md p-2">
-                      {selectedUsers.map((user) => (
-                        <div key={user.id} className="flex justify-between items-center py-1">
-                          <div>
-                            <div className="font-medium">{user.name}</div>
-                            <div className="text-sm text-gray-500">{user.email}</div>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => handleUserToggle(user.id)}
-                            className="text-red-600 hover:text-red-800 text-sm"
-                          >
-                            Remove
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
 
               {error && (

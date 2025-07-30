@@ -1,11 +1,7 @@
-from .authentication_interface import AuthenticationInterface
-from .nextauth_service import NextAuthService
 from .authentication_service import AuthenticationService
-from .api_key_auth import ApiKeyAuth
+from .interfaces import IAuthenticationService
 
 __all__ = [
-    'AuthenticationInterface',
-    'NextAuthService', 
     'AuthenticationService',
-    'ApiKeyAuth'
+    'IAuthenticationService'
 ] 

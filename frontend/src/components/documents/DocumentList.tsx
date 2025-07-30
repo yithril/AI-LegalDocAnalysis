@@ -3,22 +3,10 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { useTheme } from '@/components/providers/ThemeProvider';
-import { useAuthenticatedFetch } from '@/hooks/useAuthenticatedFetch';
+import { useApiClient } from '@/lib/api-client';
 import DocumentUpload from './DocumentUpload';
 import { getStatusColor, getStatusText } from '@/lib/documentStatus';
-
-interface Document {
-  id: number;
-  filename: string;
-  original_file_path: string;
-  project_id: number;
-  status: string;
-  tenant_id: number;
-  created_at: string;
-  created_by?: string;
-  updated_at: string;
-  updated_by?: string;
-}
+import type { GetDocumentResponse, CreateDocumentResponse } from '@/types/api';
 
 interface DocumentListProps {
   projectId: number;
@@ -28,34 +16,32 @@ interface DocumentListProps {
 export default function DocumentList({ projectId, statusFilter }: DocumentListProps) {
   const { user, isAnalyst, isPM, isAdmin } = useAuth();
   const { theme } = useTheme();
-  const { authenticatedFetch, hasToken } = useAuthenticatedFetch({
-    onError: (error) => setError(error)
-  });
+  const apiClient = useApiClient();
   
-  const [documents, setDocuments] = useState<Document[]>([]);
+  const [documents, setDocuments] = useState<GetDocumentResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showUpload, setShowUpload] = useState(false);
 
   useEffect(() => {
-    if (hasToken) {
+    if (user) {
       fetchDocuments();
     }
-  }, [hasToken, projectId, statusFilter]);
+  }, [user, projectId, statusFilter]);
 
   const fetchDocuments = async () => {
     try {
       setLoading(true);
       setError(null);
       
-      // Build URL with optional status filter
-      let url = `/api/documents/project/${projectId}`;
+      // Use the appropriate API method based on status filter
+      let data: GetDocumentResponse[];
       if (statusFilter) {
-        url += `?status=${encodeURIComponent(statusFilter)}`;
+        data = await apiClient.getDocumentsByStatusAndProject(statusFilter, projectId);
+      } else {
+        data = await apiClient.getDocumentsByProject(projectId);
       }
       
-      const response = await authenticatedFetch(url);
-      const data = await response.json();
       setDocuments(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch documents');
@@ -64,7 +50,7 @@ export default function DocumentList({ projectId, statusFilter }: DocumentListPr
     }
   };
 
-  const handleUploadSuccess = (document: Document) => {
+  const handleUploadSuccess = (document: CreateDocumentResponse) => {
     // Add the new document to the list
     setDocuments(prev => [document, ...prev]);
     setShowUpload(false);
@@ -77,8 +63,6 @@ export default function DocumentList({ projectId, statusFilter }: DocumentListPr
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString();
   };
-
-
 
   const canUpload = isAnalyst() || isPM() || isAdmin();
 

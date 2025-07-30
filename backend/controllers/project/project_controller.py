@@ -7,18 +7,18 @@ from dtos.project import (
     GetProjectResponse
 )
 from dtos.user_group import GetUserGroupResponse
-from services.project_service import ProjectService
-from services.authorization_service import AuthorizationService
-from services.authorization_service.jwt_service import extract_user_id_from_jwt, extract_tenant_slug_from_jwt
-from container import Container
-
+from services.authorization_service import get_user_claims
+from services.authentication_service.interfaces import UserClaims
+from services.project_service.interfaces import IProjectService
+from services.security_service.interfaces import ISecurityOrchestrator
+from services.service_factory import ServiceFactory
 logger = logging.getLogger(__name__)
 
 class ProjectController:
     """Controller for project-related endpoints"""
     
-    def __init__(self, container: Container):
-        self.container = container
+    def __init__(self, service_factory: ServiceFactory):
+        self.service_factory = service_factory
         self.router = APIRouter(prefix="/api/projects", tags=["projects"])
         self._setup_routes()
     
@@ -105,225 +105,322 @@ class ProjectController:
     async def create_project(
         self, 
         request: CreateProjectRequest, 
-        user_id: int = Depends(extract_user_id_from_jwt),
-        tenant_slug: str = Depends(extract_tenant_slug_from_jwt)
+        user_claims: UserClaims = Depends(get_user_claims)
     ) -> CreateProjectResponse:
         """Create a new project (ADMIN, PROJECT_MANAGER only)"""
         try:
-            project_service = self.container.project_service(tenant_slug=tenant_slug)
+            # Extract values from user_claims
+            user_id = int(user_claims.provider_claims.get('database_id', 0))
+            tenant_slug = user_claims.tenant_slug
             
-            # Get tenant ID from tenant service
-            tenant_service = self.container.tenant_service()
-            tenant = await tenant_service.get_tenant_by_slug(tenant_slug)
-            if not tenant:
-                raise HTTPException(status_code=404, detail="Tenant not found")
-            tenant_id = tenant.id
+            logger.info(f"Creating project '{request.name}' for user {user_id} in tenant {tenant_slug}")
             
-            result = await project_service.create_project(request, tenant_id, user_id)
-            logger.info(f"Successfully created project: {result.id}")
-            return result
+            # Create tenant-aware security orchestrator
+            security_orchestrator = self.service_factory.create_security_orchestrator(tenant_slug)
             
-        except PermissionError as e:
-            logger.warning(f"Permission denied creating project: {e}")
-            raise HTTPException(status_code=403, detail=str(e))
-        except ValueError as e:
-            logger.warning(f"Validation error creating project: {e}")
-            raise HTTPException(status_code=400, detail=str(e))
-        except Exception as e:
-            logger.error(f"Unexpected error creating project: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail="Internal server error")
-    
-    async def get_projects(
-        self,
-        user_id: int = Depends(extract_user_id_from_jwt),
-        tenant_slug: str = Depends(extract_tenant_slug_from_jwt)
-    ) -> List[GetProjectResponse]:
-        """Get all projects accessible to current user"""
-        try:
-            project_service = self.container.project_service(tenant_slug=tenant_slug)
+            # Check authorization - only ADMIN and PROJECT_MANAGER can create projects
+            if not await security_orchestrator.require_permission(user_id, "project:create"):
+                raise HTTPException(status_code=403, detail="Insufficient permissions to create projects")
             
-            # Get projects filtered by user access
-            projects = await project_service.get_projects_for_user(user_id)
-            logger.info(f"Retrieved {len(projects)} projects for user {user_id}")
-            return projects
+            # Get project service from factory
+            project_service = self.service_factory.create_project_service(tenant_slug)
             
-        except Exception as e:
-            logger.error(f"Unexpected error getting projects: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail="Internal server error")
-    
-    async def get_project_by_id(
-        self, 
-        project_id: int = Path(..., description="Project ID"),
-        user_id: int = Depends(extract_user_id_from_jwt),
-        tenant_slug: str = Depends(extract_tenant_slug_from_jwt)
-    ) -> GetProjectResponse:
-        """Get project by ID (requires project access)"""
-        try:
-            project_service = self.container.project_service(tenant_slug=tenant_slug)
+            # Create the project (service now accepts tenant_slug)
+            created_project_dto = await project_service.create_project(request, tenant_slug)
             
-            # Check if user has access to this project
-            auth_service = self.container.authorization_service(tenant_slug=tenant_slug)
-            if not await auth_service.user_has_project_access(user_id, project_id):
-                logger.warning(f"User {user_id} denied access to project {project_id}")
-                raise HTTPException(status_code=403, detail="Access denied to this project")
-            
-            project = await project_service.get_project_by_id(project_id)
-            if not project:
-                raise HTTPException(status_code=404, detail="Project not found")
-            
-            logger.info(f"Retrieved project {project_id} for user {user_id}")
-            return project
+            logger.info(f"Successfully created project {created_project_dto.id}")
+            return created_project_dto
             
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Unexpected error getting project {project_id}: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail="Internal server error")
-    
+            logger.error(f"Error creating project: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to create project")
+
+    async def get_projects(
+        self,
+        user_claims: UserClaims = Depends(get_user_claims)
+    ) -> List[GetProjectResponse]:
+        """Get all projects accessible to current user based on role"""
+        try:
+            # Extract values from user_claims
+            user_id = int(user_claims.provider_claims.get('database_id', 0))
+            tenant_slug = user_claims.tenant_slug
+            
+            logger.info(f"Getting projects for user {user_id} in tenant {tenant_slug}")
+            
+            # Create tenant-aware security orchestrator
+            security_orchestrator = self.service_factory.create_security_orchestrator(tenant_slug)
+            
+            # Get project service from factory
+            project_service = self.service_factory.create_project_service(tenant_slug)
+            
+            # Check if user has admin/project_manager role - they can see all projects
+            if await security_orchestrator.authz_service.user_can_create_projects(user_id):
+                # Admins/PMs see ALL projects in tenant
+                project_dtos = await project_service.get_all_projects()
+                logger.info(f"Admin/PM access: Found {len(project_dtos)} total projects for user {user_id}")
+            else:
+                # Regular users (viewers/analysts) see only projects they have access to
+                project_dtos = await project_service.get_projects_for_user(user_id)
+                logger.info(f"Regular user access: Found {len(project_dtos)} projects for user {user_id}")
+            
+            return project_dtos
+            
+        except Exception as e:
+            logger.error(f"Error getting projects: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to get projects")
+
+    async def get_project_by_id(
+        self, 
+        project_id: int = Path(..., description="Project ID"),
+        user_claims: UserClaims = Depends(get_user_claims)
+    ) -> GetProjectResponse:
+        """Get project by ID (requires project access)"""
+        try:
+            # Extract values from user_claims
+            user_id = int(user_claims.provider_claims.get('database_id', 0))
+            tenant_slug = user_claims.tenant_slug
+            
+            logger.info(f"Getting project {project_id} for user {user_id} in tenant {tenant_slug}")
+            
+            # Create tenant-aware security orchestrator
+            security_orchestrator = self.service_factory.create_security_orchestrator(tenant_slug)
+            
+            # Check authorization - user must have access to this project
+            if not await security_orchestrator.require_permission(user_id, "project:access", project_id=project_id):
+                raise HTTPException(status_code=403, detail="Access denied to this project")
+            
+            # Get project service from factory
+            project_service = self.service_factory.create_project_service(tenant_slug)
+            
+            # Get the project (service now returns DTO directly)
+            project_dto = await project_service.get_project_by_id(project_id)
+            
+            if not project_dto:
+                raise HTTPException(status_code=404, detail="Project not found")
+            
+            logger.info(f"Successfully retrieved project {project_id}")
+            return project_dto
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error getting project {project_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to get project")
+
     async def update_project(
         self, 
         project_id: int, 
         request: UpdateProjectRequest,
-        user_id: int = Depends(extract_user_id_from_jwt),
-        tenant_slug: str = Depends(extract_tenant_slug_from_jwt)
+        user_claims: UserClaims = Depends(get_user_claims)
     ) -> UpdateProjectResponse:
         """Update a project (ADMIN, PROJECT_MANAGER only)"""
         try:
-            project_service = self.container.project_service(tenant_slug=tenant_slug)
+            # Extract values from user_claims
+            user_id = int(user_claims.provider_claims.get('database_id', 0))
+            tenant_slug = user_claims.tenant_slug
             
-            result = await project_service.update_project(project_id, request, user_id)
-            logger.info(f"Successfully updated project: {project_id}")
-            return result
+            logger.info(f"Updating project {project_id} for user {user_id} in tenant {tenant_slug}")
             
-        except PermissionError as e:
-            logger.warning(f"Permission denied updating project {project_id}: {e}")
-            raise HTTPException(status_code=403, detail=str(e))
-        except ValueError as e:
-            logger.warning(f"Validation error updating project {project_id}: {e}")
-            raise HTTPException(status_code=400, detail=str(e))
-        except Exception as e:
-            logger.error(f"Unexpected error updating project {project_id}: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail="Internal server error")
-    
-    async def delete_project(
-        self, 
-        project_id: int,
-        user_id: int = Depends(extract_user_id_from_jwt),
-        tenant_slug: str = Depends(extract_tenant_slug_from_jwt)
-    ) -> dict:
-        """Delete a project (ADMIN, PROJECT_MANAGER only)"""
-        try:
-            project_service = self.container.project_service(tenant_slug=tenant_slug)
+            # Create tenant-aware security orchestrator
+            security_orchestrator = self.service_factory.create_security_orchestrator(tenant_slug)
             
-            success = await project_service.delete_project(project_id, user_id)
-            if success:
-                logger.info(f"Successfully deleted project: {project_id}")
-                return {"message": "Project deleted successfully"}
-            else:
-                raise HTTPException(status_code=404, detail="Project not found")
+            # Check authorization - only ADMIN and PROJECT_MANAGER can update projects
+            if not await security_orchestrator.require_permission(user_id, "project:update", project_id=project_id):
+                raise HTTPException(status_code=403, detail="Insufficient permissions to update projects")
             
-        except PermissionError as e:
-            logger.warning(f"Permission denied deleting project {project_id}: {e}")
-            raise HTTPException(status_code=403, detail=str(e))
+            # Get project service from factory
+            project_service = self.service_factory.create_project_service(tenant_slug)
+            
+            # Update the project (service now returns DTO directly)
+            updated_project_dto = await project_service.update_project(project_id, request)
+            
+            logger.info(f"Successfully updated project {project_id}")
+            return updated_project_dto
+            
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Unexpected error deleting project {project_id}: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail="Internal server error")
-    
+            logger.error(f"Error updating project {project_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to update project")
+
+    async def delete_project(
+        self, 
+        project_id: int,
+        user_claims: UserClaims = Depends(get_user_claims)
+    ) -> dict:
+        """Delete a project (ADMIN, PROJECT_MANAGER only)"""
+        try:
+            # Extract values from user_claims
+            user_id = int(user_claims.provider_claims.get('database_id', 0))
+            tenant_slug = user_claims.tenant_slug
+            
+            logger.info(f"Deleting project {project_id} for user {user_id} in tenant {tenant_slug}")
+            
+            # Create tenant-aware security orchestrator
+            security_orchestrator = self.service_factory.create_security_orchestrator(tenant_slug)
+            
+            # Check authorization - only ADMIN and PROJECT_MANAGER can delete projects
+            if not await security_orchestrator.require_permission(user_id, "project:delete", project_id=project_id):
+                raise HTTPException(status_code=403, detail="Insufficient permissions to delete projects")
+            
+            # Get project service from factory
+            project_service = self.service_factory.create_project_service(tenant_slug)
+            
+            # Delete the project
+            await project_service.delete_project(project_id)
+            
+            logger.info(f"Successfully deleted project {project_id}")
+            return {"message": "Project deleted successfully"}
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error deleting project {project_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to delete project")
+
     async def add_user_group_to_project(
         self, 
         project_id: int, 
         user_group_id: int,
-        user_id: int = Depends(extract_user_id_from_jwt),
-        tenant_slug: str = Depends(extract_tenant_slug_from_jwt)
+        user_claims: UserClaims = Depends(get_user_claims)
     ) -> dict:
         """Add user group to project (ADMIN, PROJECT_MANAGER only)"""
         try:
-            project_service = self.container.project_service(tenant_slug=tenant_slug)
+            # Extract values from user_claims
+            user_id = int(user_claims.provider_claims.get('database_id', 0))
+            tenant_slug = user_claims.tenant_slug
             
-            success = await project_service.add_user_group_to_project(project_id, user_group_id, user_id)
-            if success:
-                logger.info(f"Successfully added user group {user_group_id} to project {project_id}")
-                return {"message": "User group added to project successfully"}
-            else:
-                raise HTTPException(status_code=400, detail="Failed to add user group to project")
+            logger.info(f"Adding user group {user_group_id} to project {project_id} for user {user_id}")
             
-        except PermissionError as e:
-            logger.warning(f"Permission denied adding user group to project {project_id}: {e}")
-            raise HTTPException(status_code=403, detail=str(e))
+            # Create tenant-aware security orchestrator
+            security_orchestrator = self.service_factory.create_security_orchestrator(tenant_slug)
+            
+            # Check authorization - only ADMIN and PROJECT_MANAGER can manage project groups
+            if not await security_orchestrator.require_permission(user_id, "project:update", project_id=project_id):
+                raise HTTPException(status_code=403, detail="Insufficient permissions to manage project groups")
+            
+            # Get project service from factory
+            project_service = self.service_factory.create_project_service(tenant_slug)
+            
+            # Add user group to project
+            await project_service.add_user_group_to_project(project_id, user_group_id)
+            
+            logger.info(f"Successfully added user group {user_group_id} to project {project_id}")
+            return {"message": "User group added to project successfully"}
+            
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Unexpected error adding user group to project {project_id}: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail="Internal server error")
-    
+            logger.error(f"Error adding user group {user_group_id} to project {project_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to add user group to project")
+
     async def remove_user_group_from_project(
         self, 
         project_id: int, 
         user_group_id: int,
-        user_id: int = Depends(extract_user_id_from_jwt),
-        tenant_slug: str = Depends(extract_tenant_slug_from_jwt)
+        user_claims: UserClaims = Depends(get_user_claims)
     ) -> dict:
         """Remove user group from project (ADMIN, PROJECT_MANAGER only)"""
         try:
-            project_service = self.container.project_service(tenant_slug=tenant_slug)
+            # Extract values from user_claims
+            user_id = int(user_claims.provider_claims.get('database_id', 0))
+            tenant_slug = user_claims.tenant_slug
             
-            success = await project_service.remove_user_group_from_project(project_id, user_group_id, user_id)
-            if success:
-                logger.info(f"Successfully removed user group {user_group_id} from project {project_id}")
-                return {"message": "User group removed from project successfully"}
-            else:
-                raise HTTPException(status_code=400, detail="Failed to remove user group from project")
+            logger.info(f"Removing user group {user_group_id} from project {project_id} for user {user_id}")
             
-        except PermissionError as e:
-            logger.warning(f"Permission denied removing user group from project {project_id}: {e}")
-            raise HTTPException(status_code=403, detail=str(e))
+            # Create tenant-aware security orchestrator
+            security_orchestrator = self.service_factory.create_security_orchestrator(tenant_slug)
+            
+            # Check authorization - only ADMIN and PROJECT_MANAGER can manage project groups
+            if not await security_orchestrator.require_permission(user_id, "project:update", project_id=project_id):
+                raise HTTPException(status_code=403, detail="Insufficient permissions to manage project groups")
+            
+            # Get project service from factory
+            project_service = self.service_factory.create_project_service(tenant_slug)
+            
+            # Remove user group from project
+            await project_service.remove_user_group_from_project(project_id, user_group_id)
+            
+            logger.info(f"Successfully removed user group {user_group_id} from project {project_id}")
+            return {"message": "User group removed from project successfully"}
+            
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Unexpected error removing user group from project {project_id}: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail="Internal server error")
-    
+            logger.error(f"Error removing user group {user_group_id} from project {project_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to remove user group from project")
+
     async def get_user_groups_for_project(
         self, 
         project_id: int = Path(..., description="Project ID"),
-        user_id: int = Depends(extract_user_id_from_jwt),
-        tenant_slug: str = Depends(extract_tenant_slug_from_jwt)
+        user_claims: UserClaims = Depends(get_user_claims)
     ) -> List[GetUserGroupResponse]:
         """Get user groups assigned to a project"""
         try:
-            project_service = self.container.project_service(tenant_slug=tenant_slug)
+            # Extract values from user_claims
+            user_id = int(user_claims.provider_claims.get('database_id', 0))
+            tenant_slug = user_claims.tenant_slug
             
+            logger.info(f"Getting user groups for project {project_id} for user {user_id}")
+            
+            # Create tenant-aware security orchestrator
+            security_orchestrator = self.service_factory.create_security_orchestrator(tenant_slug)
+            
+            # Check authorization - user must have access to this project
+            if not await security_orchestrator.require_permission(user_id, "project:access", project_id=project_id):
+                raise HTTPException(status_code=403, detail="Access denied to this project")
+            
+            # Get project service from factory
+            project_service = self.service_factory.create_project_service(tenant_slug)
+            
+            # Get user groups for the project
             user_groups = await project_service.get_user_groups_for_project(project_id)
-            logger.info(f"Retrieved {len(user_groups)} user groups for project {project_id}")
+            
+            logger.info(f"Found {len(user_groups)} user groups for project {project_id}")
             return user_groups
             
-        except ValueError as e:
-            logger.warning(f"Validation error getting user groups for project {project_id}: {e}")
-            raise HTTPException(status_code=400, detail=str(e))
+        except HTTPException:
+            raise
         except Exception as e:
-            logger.error(f"Unexpected error getting user groups for project {project_id}: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail="Internal server error")
-    
+            logger.error(f"Error getting user groups for project {project_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to get user groups for project")
+
     async def get_available_user_groups_for_project(
         self, 
         project_id: int = Path(..., description="Project ID"),
         search_term: Optional[str] = Query(None, description="Search term for filtering groups"),
-        user_id: int = Depends(extract_user_id_from_jwt),
-        tenant_slug: str = Depends(extract_tenant_slug_from_jwt)
+        user_claims: UserClaims = Depends(get_user_claims)
     ) -> List[GetUserGroupResponse]:
         """Get user groups available to add to a project (groups not already assigned)"""
         try:
-            project_service = self.container.project_service(tenant_slug=tenant_slug)
+            # Extract values from user_claims
+            user_id = int(user_claims.provider_claims.get('database_id', 0))
+            tenant_slug = user_claims.tenant_slug
             
-            user_groups = await project_service.get_user_groups_not_in_project(project_id, search_term)
-            logger.info(f"Retrieved {len(user_groups)} available user groups for project {project_id}")
-            return user_groups
+            logger.info(f"Getting available user groups for project {project_id} for user {user_id}")
             
-        except ValueError as e:
-            logger.warning(f"Validation error getting available user groups for project {project_id}: {e}")
-            raise HTTPException(status_code=400, detail=str(e))
+            # Create tenant-aware security orchestrator
+            security_orchestrator = self.service_factory.create_security_orchestrator(tenant_slug)
+            
+            # Check authorization - user must have access to this project
+            if not await security_orchestrator.require_permission(user_id, "project:access", project_id=project_id):
+                raise HTTPException(status_code=403, detail="Access denied to this project")
+            
+            # Get project service from factory
+            project_service = self.service_factory.create_project_service(tenant_slug)
+            
+            # Get available user groups for the project
+            available_groups = await project_service.get_user_groups_not_in_project(
+                project_id, search_term
+            )
+            
+            logger.info(f"Found {len(available_groups)} available user groups for project {project_id}")
+            return available_groups
+            
+        except HTTPException:
+            raise
         except Exception as e:
-            logger.error(f"Unexpected error getting available user groups for project {project_id}: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail="Internal server error") 
+            logger.error(f"Error getting available user groups for project {project_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to get available user groups for project") 
