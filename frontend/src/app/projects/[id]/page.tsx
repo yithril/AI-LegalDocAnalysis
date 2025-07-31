@@ -17,7 +17,7 @@ import type { GetProjectResponse } from '@/types/api'
 export default function ProjectDashboard() {
   const params = useParams()
   const router = useRouter()
-  const { user } = useAuth()
+  const { user, isPM, isAdmin } = useAuth()
   const { theme } = useTheme()
   const apiClient = useApiClient()
   
@@ -25,34 +25,28 @@ export default function ProjectDashboard() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [activeSection, setActiveSection] = useState('overview')
+  const [hasContentAccess, setHasContentAccess] = useState(false)
 
   const projectId = params.id as string
 
   useEffect(() => {
     if (projectId) {
-      fetchProject()
+      fetchProject();
     }
-  }, [projectId])
+  }, [projectId]);
 
   const fetchProject = async () => {
-    console.log('🔍 DEBUG: fetchProject called with projectId:', projectId)
     try {
-      setLoading(true)
-      setError(null)
-      
-      console.log('🔍 DEBUG: About to call apiClient.getProject')
-      const data = await apiClient.getProject(parseInt(projectId))
-      console.log('🔍 DEBUG: Got response from apiClient:', data)
-      setProject(data)
-    } catch (err) {
-      console.error('❌ DEBUG: Error in fetchProject:', err)
-      setError('Failed to load project')
-      console.error('Error fetching project:', err)
+      setLoading(true);
+      const data = await apiClient.getProject(projectId);
+      setProject(data);
+    } catch (error) {
+      console.error('Error fetching project:', error);
+      setError('Failed to load project');
     } finally {
-      console.log('🔍 DEBUG: Setting loading to false')
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString()
@@ -61,19 +55,54 @@ export default function ProjectDashboard() {
   const renderActiveSection = () => {
     if (!project) return null
 
+    // Content sections that require group membership
+    const contentSections = ['documents', 'actors', 'timeline', 'ai-assistant']
+    
+    // Check if user is trying to access content without permission
+    if (contentSections.includes(activeSection) && !hasContentAccess) {
+      return (
+        <div className="space-y-6">
+          <div className="bg-white rounded-lg shadow-md p-6">
+            <div className="text-center py-8">
+              <div className="text-4xl mb-4">🔒</div>
+              <h3 className="text-xl font-semibold mb-2" style={{ color: theme.textColor }}>
+                Access Restricted
+              </h3>
+              <p className="text-gray-600 mb-4">
+                You need to be a member of a group assigned to this project to access this section.
+              </p>
+              {(isPM() || isAdmin()) && (
+                <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                  <p className="text-blue-800 text-sm">
+                    As a {isAdmin() ? 'Admin' : 'Project Manager'}, you can manage this project's groups 
+                    in the "Project Access" section, but you need to be added to a group to view its content.
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )
+    }
+
     switch (activeSection) {
       case 'overview':
         return <ProjectOverview project={project} />
       case 'documents':
-        return <ProjectDocuments />
+        return <ProjectDocuments projectId={project.id} />
       case 'actors':
         return <ProjectActors />
       case 'timeline':
         return <ProjectTimeline />
       case 'ai-assistant':
         return <ProjectAIAssistant />
-      case 'project-access':
-        return <ProjectAccess projectId={project.id} />
+      case 'documents-pending-approval':
+        // Redirect to the documents pending approval page
+        router.push(`/projects/${project.id}/documents-pending-approval`)
+        return null
+      // Note: Project Access management moved to project list
+      // case 'project-access':
+      //   return <ProjectAccess projectId={project.id} />
       default:
         return <ProjectOverview project={project} />
     }

@@ -26,9 +26,9 @@ export default class ErrorBoundary extends Component<Props, State> {
     console.error('ErrorBoundary caught an error:', error, errorInfo)
     
     // If it's an authentication error, sign out the user
-    if (error.message.includes('Session expired') || error.message.includes('401')) {
-      console.log('Authentication error detected, signing out user...')
-      signOut({ callbackUrl: '/auth/signin' })
+    if (error?.message?.includes('401') || error?.message?.includes('403')) {
+      // Authentication error detected, sign out the user
+      signOut({ callbackUrl: '/auth/signin' });
     }
   }
 

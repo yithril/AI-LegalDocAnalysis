@@ -47,31 +47,22 @@ export default function ProjectList({ className = '' }: ProjectListProps) {
   const apiClient = useApiClient()
 
   useEffect(() => {
-    console.log('🔍 DEBUG: ProjectList useEffect - user:', user)
     if (user) {
-      console.log('🔍 DEBUG: ProjectList - calling fetchProjects')
-      fetchProjects()
-    } else {
-      console.log('🔍 DEBUG: ProjectList - no user, not fetching')
+      setIsLoading(true);
+      fetchProjects();
     }
-  }, [user])
+  }, [user]);
 
   const fetchProjects = async () => {
-    console.log('🔍 DEBUG: ProjectList fetchProjects called')
     try {
-      setIsLoading(true)
-      console.log('🔍 DEBUG: ProjectList - about to call apiClient.getProjects')
-      const data = await apiClient.getProjects()
-      console.log('🔍 DEBUG: ProjectList - got data from apiClient:', data)
-      setProjects(data)
-    } catch (err) {
-      console.error('❌ DEBUG: ProjectList - Error in fetchProjects:', err)
-      setError('Failed to load projects')
+      const data = await apiClient.getProjects();
+      setProjects(data);
+    } catch (error) {
+      console.error('Error fetching projects:', error);
     } finally {
-      console.log('🔍 DEBUG: ProjectList - setting loading to false')
-      setIsLoading(false)
+      setIsLoading(false);
     }
-  }
+  };
 
   const handleDeleteProject = async (projectId: number) => {
     if (!confirm('Are you sure you want to delete this project?')) {
@@ -219,12 +210,14 @@ export default function ProjectList({ className = '' }: ProjectListProps) {
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                   <div className="flex space-x-2">
                     {/* Open Button */}
-                    <button
-                      className="text-blue-600 hover:text-blue-900"
-                      onClick={() => handleOpenProject(project.id)}
-                    >
-                      Open
-                    </button>
+                    {project.can_access && (
+                      <button
+                        className="text-blue-600 hover:text-blue-900"
+                        onClick={() => handleOpenProject(project.id)}
+                      >
+                        Open
+                      </button>
+                    )}
 
                     {/* Edit Button */}
                     {canEditProject(userRole) && (

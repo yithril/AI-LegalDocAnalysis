@@ -14,7 +14,7 @@ class Tenant(AuditableBase):
     database_url = Column(String(500), nullable=True)  # Tenant-specific database
     pinecone_index = Column(String(100), nullable=True)  # Tenant-specific index name
     pinecone_region = Column(String(100), nullable=True)  # Tenant-specific region
-    blob_storage_connection = Column(String(500), nullable=True)
+    blob_storage_connection = Column(String(500), nullable=True)  # Azure Storage connection string
     
     # Metadata field for additional tenant-specific data
     tenant_metadata = Column(Text, nullable=True)  # Store JSON as text for now

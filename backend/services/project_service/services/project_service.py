@@ -20,11 +20,22 @@ class ProjectService(IProjectService):
         self.tenant_slug = tenant_slug
         self.project_repository = ProjectRepository(tenant_slug)
     
-    async def get_project_by_id(self, project_id: int) -> Optional[GetProjectResponse]:
-        """Get project by ID"""
+    async def get_project_by_id(self, project_id: int, user_id: int = None) -> Optional[GetProjectResponse]:
+        """Get project by ID with access information"""
         project = await self.project_repository.find_by_id(project_id)
         if project:
-            return ProjectConverter.to_get_response(project)
+            # Check access for this specific project
+            has_access = False
+            if user_id:
+                try:
+                    from services.authorization_service import AuthorizationService
+                    auth_service = AuthorizationService(self.tenant_slug)
+                    has_access = await auth_service.user_has_project_content_access(user_id, project_id)
+                except Exception as e:
+                    logger.error(f"Error checking access for user {user_id} to project {project_id}: {e}")
+                    has_access = False
+            
+            return ProjectConverter.to_get_response(project, user_id, has_access)
         return None
     
     async def get_project_by_name(self, name: str) -> Optional[GetProjectResponse]:
@@ -34,10 +45,21 @@ class ProjectService(IProjectService):
             return ProjectConverter.to_get_response(project)
         return None
     
-    async def get_all_projects(self) -> List[GetProjectResponse]:
-        """Get all active projects in the current tenant"""
+    async def get_all_projects(self, user_id: int = None) -> List[GetProjectResponse]:
+        """Get all active projects in the current tenant with access information"""
         projects = await self.project_repository.find_all()
-        return ProjectConverter.to_get_response_list(projects)
+        
+        # Create access checker function
+        async def access_checker(user_id: int, project_id: int) -> bool:
+            try:
+                from services.authorization_service import AuthorizationService
+                auth_service = AuthorizationService(self.tenant_slug)
+                return await auth_service.user_has_project_content_access(user_id, project_id)
+            except Exception as e:
+                logger.error(f"Error checking access for user {user_id} to project {project_id}: {e}")
+                return False
+        
+        return await ProjectConverter.to_get_response_list(projects, user_id, access_checker)
     
     async def create_project(self, request: CreateProjectRequest, tenant_slug: str) -> CreateProjectResponse:
         """Create a new project with business logic validation"""

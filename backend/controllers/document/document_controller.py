@@ -7,6 +7,9 @@ from services.authentication_service.interfaces import UserClaims
 from services.document_service.interfaces import IDocumentService
 from services.security_service.interfaces import ISecurityOrchestrator
 from services.service_factory import ServiceFactory
+from workflows.temporal_client import temporal_client
+from workflows.document_workflow import DocumentWorkflowInput
+from models.tenant.document import DocumentStatus
 logger = logging.getLogger(__name__)
 
 class DocumentController:
@@ -100,7 +103,7 @@ class DocumentController:
             security_orchestrator = self.service_factory.create_security_orchestrator(tenant_slug)
             
             # Check authorization - user must have access to this project
-            if not await security_orchestrator.require_permission(user_id, "project:access", project_id=project_id):
+            if not await security_orchestrator.require_permission(user_id, "project:content", project_id=project_id):
                 raise HTTPException(status_code=403, detail="Access denied to this project")
             
             # Get document service from factory
@@ -251,7 +254,7 @@ class DocumentController:
             security_orchestrator = self.service_factory.create_security_orchestrator(tenant_slug)
             
             # Check authorization - user must have access to this project
-            if not await security_orchestrator.require_permission(user_id, "project:access", project_id=project_id):
+            if not await security_orchestrator.require_permission(user_id, "project:content", project_id=project_id):
                 raise HTTPException(status_code=403, detail="Access denied to this project")
             
             # Get document service from factory
@@ -284,7 +287,7 @@ class DocumentController:
             security_orchestrator = self.service_factory.create_security_orchestrator(tenant_slug)
             
             # Check authorization - user must have access to this project
-            if not await security_orchestrator.require_permission(user_id, "project:access", project_id=project_id):
+            if not await security_orchestrator.require_permission(user_id, "project:content", project_id=project_id):
                 raise HTTPException(status_code=403, detail="Access denied to this project")
             
             # Get document service from factory
@@ -306,7 +309,7 @@ class DocumentController:
         file: UploadFile = File(...),
         user_claims: UserClaims = Depends(get_user_claims)
     ) -> CreateDocumentResponse:
-        """Upload a document file"""
+        """Upload a document file and start processing workflow"""
         try:
             # Extract values from user_claims
             user_id = int(user_claims.provider_claims.get('database_id', 0))
@@ -314,18 +317,68 @@ class DocumentController:
             
             logger.info(f"Uploading document '{file.filename}' for project {project_id} by user {user_id} in tenant {tenant_slug}")
             
-            # Create tenant-aware security orchestrator
+            # 1. Authorization check
             security_orchestrator = self.service_factory.create_security_orchestrator(tenant_slug)
-            
-            # Check authorization - user must have permission to create documents in this project
             if not await security_orchestrator.require_permission(user_id, "document:create", project_id=project_id):
                 raise HTTPException(status_code=403, detail="Insufficient permissions to upload documents to this project")
             
-            # Get document service from factory
+            # 2. Get services
             document_service = self.service_factory.create_document_service(tenant_slug)
+            blob_storage_service = self.service_factory.create_blob_storage_service(tenant_slug)
             
-            # Upload the document (service now returns DTO directly)
-            created_document_dto = await document_service.upload_document(project_id, file, user_id)
+            # 3. Upload file to blob storage
+            logger.info(f"Uploading file '{file.filename}' to blob storage")
+            file_data = await file.read()
+            blob_url = await blob_storage_service.upload_file(
+                project_id=project_id,
+                document_id=0,  # Will be updated after document creation
+                filename=file.filename,
+                file_data=file_data,
+                workflow_stage="uploaded",
+                content_type=file.content_type
+            )
+            logger.info(f"File uploaded to blob storage: {blob_url}")
+            
+            # 4. Create document record in database
+            logger.info(f"Creating document record in database")
+            from dtos.document.create_document import CreateDocumentRequest
+            create_request = CreateDocumentRequest(
+                filename=file.filename,
+                original_file_path=blob_url,
+                project_id=project_id
+            )
+            created_document_dto = await document_service.create_document(create_request, user_id)
+            logger.info(f"Document record created with ID: {created_document_dto.id}")
+            
+            # 5. Update blob storage with correct document ID
+            logger.info(f"Updating blob storage path with document ID: {created_document_dto.id}")
+            updated_blob_url = await blob_storage_service.upload_file(
+                project_id=project_id,
+                document_id=created_document_dto.id,
+                filename=file.filename,
+                file_data=file_data,
+                workflow_stage="uploaded",
+                content_type=file.content_type
+            )
+            
+            # 6. Start the workflow! 🚀
+            logger.info(f"Starting document processing workflow for document ID: {created_document_dto.id}")
+            workflow_input = DocumentWorkflowInput(
+                tenant_id=tenant_slug,
+                project_id=project_id,
+                document_id=str(created_document_dto.id),
+                file_name=file.filename,
+                file_size=len(file_data),
+                content_type=file.content_type,
+                blob_url=updated_blob_url
+            )
+            
+            await temporal_client.start_workflow(
+                "DocumentWorkflow",
+                task_queue="document-processing",
+                args=[workflow_input]
+            )
+            logger.info(f"Workflow started successfully for document ID: {created_document_dto.id}")
             
             logger.info(f"Successfully uploaded document '{file.filename}' with ID {created_document_dto.id}")
             return created_document_dto

@@ -157,8 +157,8 @@ class ProjectController:
             
             # Check if user has admin/project_manager role - they can see all projects
             if await security_orchestrator.authz_service.user_can_create_projects(user_id):
-                # Admins/PMs see ALL projects in tenant
-                project_dtos = await project_service.get_all_projects()
+                # Admins/PMs see ALL projects in tenant with access flags
+                project_dtos = await project_service.get_all_projects(user_id)
                 logger.info(f"Admin/PM access: Found {len(project_dtos)} total projects for user {user_id}")
             else:
                 # Regular users (viewers/analysts) see only projects they have access to
@@ -176,7 +176,7 @@ class ProjectController:
         project_id: int = Path(..., description="Project ID"),
         user_claims: UserClaims = Depends(get_user_claims)
     ) -> GetProjectResponse:
-        """Get project by ID (requires project access)"""
+        """Get project by ID (requires strict project content access)"""
         try:
             # Extract values from user_claims
             user_id = int(user_claims.provider_claims.get('database_id', 0))
@@ -187,15 +187,15 @@ class ProjectController:
             # Create tenant-aware security orchestrator
             security_orchestrator = self.service_factory.create_security_orchestrator(tenant_slug)
             
-            # Check authorization - user must have access to this project
-            if not await security_orchestrator.require_permission(user_id, "project:access", project_id=project_id):
+            # Check authorization - user must have strict content access to this project
+            if not await security_orchestrator.require_permission(user_id, "project:content", project_id=project_id):
                 raise HTTPException(status_code=403, detail="Access denied to this project")
             
             # Get project service from factory
             project_service = self.service_factory.create_project_service(tenant_slug)
             
-            # Get the project (service now returns DTO directly)
-            project_dto = await project_service.get_project_by_id(project_id)
+            # Get the project with access information
+            project_dto = await project_service.get_project_by_id(project_id, user_id)
             
             if not project_dto:
                 raise HTTPException(status_code=404, detail="Project not found")

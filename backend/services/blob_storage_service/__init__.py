@@ -9,7 +9,8 @@ from .blob_storage_service import (
     FileTypeNotAllowedException,
     ProjectRequiredException,
     EmptyFileException,
-    InvalidStageException
+    InvalidWorkflowStageException,
+    ContainerCreationException
 )
 
 __all__ = [
@@ -19,5 +20,6 @@ __all__ = [
     "FileTypeNotAllowedException",
     "ProjectRequiredException",
     "EmptyFileException",
-    "InvalidStageException"
+    "InvalidWorkflowStageException",
+    "ContainerCreationException"
 ] 

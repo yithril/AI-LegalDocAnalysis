@@ -22,4 +22,8 @@ class ServiceFactory:
     
     def create_security_orchestrator(self, tenant_slug: str):
         """Create a tenant-aware security orchestrator"""
-        return self.container.security_orchestrator(tenant_slug=tenant_slug) 
+        return self.container.security_orchestrator(tenant_slug=tenant_slug)
+    
+    def create_blob_storage_service(self, tenant_slug: str):
+        """Create a tenant-aware blob storage service"""
+        return self.container.blob_storage_service(tenant_slug=tenant_slug) 

@@ -47,6 +47,12 @@ class SecurityOrchestrator(ISecurityOrchestrator):
                     raise ValueError("project_id required for project:access permission")
                 has_permission = await self.authz_service.user_can_access_project(user_id, project_id)
             
+            elif permission == "project:content":
+                project_id = kwargs.get('project_id')
+                if not project_id:
+                    raise ValueError("project_id required for project:content permission")
+                has_permission = await self.authz_service.user_has_project_content_access(user_id, project_id)
+            
             elif permission == "project:update":
                 project_id = kwargs.get('project_id')
                 if not project_id:

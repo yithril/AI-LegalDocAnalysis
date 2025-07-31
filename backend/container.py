@@ -16,6 +16,10 @@ from services.document_service.interfaces import IDocumentService
 from services.document_service.services.document_service import DocumentService
 from services.blob_storage_service import BlobStorageService
 from services.text_extraction_service import TextExtractionService
+from services.chunking_service import ChunkingService
+from services.document_summary_service import DocumentSummaryService
+from services.document_summary_service.factory.summary_strategy_factory import SummaryStrategyFactory
+from services.document_classifier_service.document_classifier_service import DocumentClassifierService
 
 from services.infrastructure import database_provider
 
@@ -80,6 +84,26 @@ class Container(containers.DeclarativeContainer):
     text_extraction_service = providers.Factory(
         TextExtractionService,
         tenant_slug=providers.Callable(lambda: "default-tenant")  # Will be overridden
+    )
+    
+    # Chunking service (shared across services)
+    chunking_service = providers.Singleton(
+        ChunkingService
+    )
+    
+    # Document summary service components
+    summary_strategy_factory = providers.Singleton(
+        SummaryStrategyFactory
+    )
+    
+    document_summary_service = providers.Factory(
+        DocumentSummaryService,
+        strategy_factory=summary_strategy_factory
+    )
+    
+    # Document classifier service
+    document_classifier_service = providers.Factory(
+        DocumentClassifierService
     )
     
     # Authentication service (tenant-aware) - login/register only

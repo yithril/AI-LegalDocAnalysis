@@ -39,6 +39,26 @@ class AuthorizationService(IAuthorizationService):
             logger.error(f"Error checking project access for user {user_id}: {e}")
             return False
 
+    async def user_has_project_content_access(self, user_id: int, project_id: int) -> bool:
+        """Check if user has access to project content (documents, etc.) through group membership only"""
+        try:
+            # Import here to avoid circular imports
+            from services.project_service import ProjectService
+            
+            # Only check group-based access - no role bypass for content
+            project_service = ProjectService(self.tenant_slug)
+            user_projects = await project_service.get_projects_for_user(user_id)
+            
+            # Check if project is in user's project list (based on group membership)
+            has_access = any(project.id == project_id for project in user_projects)
+            
+            logger.info(f"User {user_id} project content access check for project {project_id}: {has_access}")
+            return has_access
+            
+        except Exception as e:
+            logger.error(f"Error checking project content access for user {user_id}: {e}")
+            return False
+
     async def user_has_document_access(self, user_id: int, document_id: int, document_service) -> bool:
         """Check if user has access to a specific document"""
         try:
@@ -47,8 +67,8 @@ class AuthorizationService(IAuthorizationService):
             if not document:
                 return False
             
-            # Check if user has access to the document's project
-            return await self.user_has_project_access(user_id, document.project_id)
+            # Check if user has access to the document's project through group membership
+            return await self.user_has_project_content_access(user_id, document.project_id)
             
         except Exception as e:
             logger.error(f"Error checking document access for user {user_id}: {e}")
@@ -116,8 +136,8 @@ class AuthorizationService(IAuthorizationService):
         return await self.user_has_document_access(user_id, document_id, document_service)
 
     async def user_can_create_documents(self, user_id: int, project_id: int) -> bool:
-        """Check if user can create documents in a project (has project access)"""
-        return await self.user_has_project_access(user_id, project_id)
+        """Check if user can create documents in a project (has project content access)"""
+        return await self.user_has_project_content_access(user_id, project_id)
 
     async def user_can_update_documents(self, user_id: int, document_id: int, document_service) -> bool:
         """Check if user can update documents (has document access)"""
@@ -128,9 +148,9 @@ class AuthorizationService(IAuthorizationService):
         return await self.user_has_document_access(user_id, document_id, document_service)
 
     async def user_can_upload_documents(self, user_id: int, project_id: int) -> bool:
-        """Check if user can upload documents to a project (has project access)"""
-        return await self.user_has_project_access(user_id, project_id)
+        """Check if user can upload documents to a project (has project content access)"""
+        return await self.user_has_project_content_access(user_id, project_id)
 
     async def user_can_view_documents(self, user_id: int, project_id: int) -> bool:
-        """Check if user can view documents in a project (has project access)"""
-        return await self.user_has_project_access(user_id, project_id) 
+        """Check if user can view documents in a project (has project content access)"""
+        return await self.user_has_project_content_access(user_id, project_id) 

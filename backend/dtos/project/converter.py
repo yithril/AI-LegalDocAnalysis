@@ -24,7 +24,7 @@ class ProjectConverter:
         )
     
     @staticmethod
-    def to_get_response(project: Project) -> GetProjectResponse:
+    def to_get_response(project: Project, user_id: int = None, has_access: bool = False) -> GetProjectResponse:
         """Convert Project entity to GetProjectResponse"""
         return GetProjectResponse(
             id=project.id,
@@ -36,7 +36,8 @@ class ProjectConverter:
             created_at=project.created_at.isoformat() if project.created_at else None,
             created_by=None,  # Project model doesn't have created_by field
             updated_at=project.updated_at.isoformat() if project.updated_at else None,
-            updated_by=None   # Project model doesn't have updated_by field
+            updated_by=None,   # Project model doesn't have updated_by field
+            can_access=has_access
         )
     
     @staticmethod
@@ -56,9 +57,15 @@ class ProjectConverter:
         )
     
     @staticmethod
-    def to_get_response_list(projects: List[Project]) -> List[GetProjectResponse]:
-        """Convert list of Project entities to list of GetProjectResponse"""
-        return [ProjectConverter.to_get_response(project) for project in projects]
+    async def to_get_response_list(projects: List[Project], user_id: int = None, access_checker=None) -> List[GetProjectResponse]:
+        """Convert list of Project entities to list of GetProjectResponse with access checks"""
+        responses = []
+        for project in projects:
+            has_access = False
+            if user_id and access_checker:
+                has_access = await access_checker(user_id, project.id)
+            responses.append(ProjectConverter.to_get_response(project, user_id, has_access))
+        return responses
     
     @staticmethod
     def from_create_request(request: CreateProjectRequest, tenant_id: int) -> Project:

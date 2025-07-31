@@ -3,6 +3,9 @@ from transformers import pipeline, AutoTokenizer, AutoModelForSeq2SeqLM
 from dtos.summary.ClassificationResult import ClassificationResult
 import os
 from prompts import CLASSIFICATION_SUMMARY_PROMPT
+import logging
+
+logger = logging.getLogger(__name__)
 
 class DocumentClassifierService():
     def __init__(self, model_path: str = "models/bart-large-mnli", offline: bool = True):
@@ -95,26 +98,47 @@ class DocumentClassifierService():
         if len(text) <= self.max_input_tokens:
             return text
         
-        # Load summarizer only once
-        if self.summarizer is None:
-            print(f"Loading summarization model: {self.summarization_model_name}")
-            self.summarizer = pipeline(
-                "summarization", 
-                model=self.summarization_model_name,
-                max_length=200,
-                min_length=50,
-                do_sample=False
-            )
-            print("Summarization model loaded!")
-        
-        # Use prompt engineering for better classification-focused summaries
-        prompt = CLASSIFICATION_SUMMARY_PROMPT.format(text=text[:self.max_input_tokens])
+        # Load summarization model if not already loaded
+        if not hasattr(self, 'summarization_model') or self.summarization_model is None:
+            logger.info(f"Loading summarization model: {self.summarization_model_name}")
+            self.summarization_model = AutoModelForSeq2SeqLM.from_pretrained(self.summarization_model_name)
+            self.summarization_tokenizer = AutoTokenizer.from_pretrained(self.summarization_model_name)
+            logger.info("Summarization model loaded!")
         
         try:
-            summary = self.summarizer(prompt, max_length=200, min_length=50, do_sample=False)[0]["summary_text"]
-            return summary
+            # Tokenize input
+            inputs = self.summarization_tokenizer(text, return_tensors="pt", max_length=512, truncation=True)
+            
+            # Generate summary
+            summary_ids = self.summarization_model.generate(
+                inputs["input_ids"],
+                max_length=150,
+                min_length=40,
+                length_penalty=2.0,
+                num_beams=4,
+                early_stopping=True
+            )
+            
+            # Decode summary
+            summary = self.summarization_tokenizer.decode(summary_ids[0], skip_special_tokens=True)
+            
+            return {
+                "summary": summary,
+                "key_points": [summary],  # Simplified for now
+                "metadata": {"model_used": self.summarization_model_name},
+                "model_used": self.summarization_model_name,
+                "processing_time": 0.0,  # TODO: Add timing
+                "token_count": len(summary.split())
+            }
+            
         except Exception as e:
-            print(f"Summarization failed: {e}")
-            # Fallback to simple truncation
-            return text[:self.max_input_tokens]
+            logger.error(f"Summarization failed: {e}")
+            return {
+                "summary": "Error generating summary",
+                "key_points": [],
+                "metadata": {"error": str(e)},
+                "model_used": self.summarization_model_name,
+                "processing_time": 0.0,
+                "token_count": 0
+            }
 

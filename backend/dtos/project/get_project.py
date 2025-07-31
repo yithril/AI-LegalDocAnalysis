@@ -14,6 +14,7 @@ class GetProjectResponse(BaseModel):
     created_by: Optional[str] = Field(None, description="User who created the project")
     updated_at: str = Field(..., description="ISO format timestamp when the project was last updated")
     updated_by: Optional[str] = Field(None, description="User who last updated the project")
+    can_access: bool = Field(..., description="Whether the current user has access to this project")
     
     class Config:
         from_attributes = True 

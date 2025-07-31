@@ -144,6 +144,7 @@ export interface GetProjectResponse {
   created_by?: string | null
   updated_at: string
   updated_by?: string | null
+  can_access: boolean
 }
 
 export interface UpdateProjectRequest {
@@ -247,11 +248,20 @@ export interface GetDocumentResponse {
   created_by?: string | null
   updated_at: string
   updated_by?: string | null
+  // Additional fields from backend document model
+  document_type?: string | null
+  classification_confidence?: number | null
+  classification_candidates?: any | null
+  classification_summary?: string | null
+  human_summary?: string | null
+  text_extraction_result?: string | null
+  file_size?: number | null
 }
 
 export interface UpdateDocumentRequest {
   filename?: string
   status?: string
+  human_summary?: string | null
 }
 
 export interface UpdateDocumentResponse {
