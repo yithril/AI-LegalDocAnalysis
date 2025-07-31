@@ -35,11 +35,20 @@ export default function ProjectDashboard() {
     }
   }, [projectId]);
 
+
+
   const fetchProject = async () => {
     try {
       setLoading(true);
+      console.log('🔍 DEBUG: Fetching project with ID:', projectId);
       const data = await apiClient.getProject(projectId);
+      console.log('🔍 DEBUG: Project data received:', data);
+      console.log('🔍 DEBUG: can_access field:', data.can_access);
+      console.log('🔍 DEBUG: User info:', { user, isPM: isPM(), isAdmin: isAdmin() });
       setProject(data);
+      // Set content access based on the can_access field from the API
+      setHasContentAccess(data.can_access);
+      console.log('🔍 DEBUG: hasContentAccess set to:', data.can_access);
     } catch (error) {
       console.error('Error fetching project:', error);
       setError('Failed to load project');
@@ -96,10 +105,7 @@ export default function ProjectDashboard() {
         return <ProjectTimeline />
       case 'ai-assistant':
         return <ProjectAIAssistant />
-      case 'documents-pending-approval':
-        // Redirect to the documents pending approval page
-        router.push(`/projects/${project.id}/documents-pending-approval`)
-        return null
+
       // Note: Project Access management moved to project list
       // case 'project-access':
       //   return <ProjectAccess projectId={project.id} />
@@ -166,6 +172,7 @@ export default function ProjectDashboard() {
           activeSection={activeSection}
           onSectionChange={setActiveSection}
           projectId={project.id}
+          hasContentAccess={hasContentAccess}
         />
 
         {/* Main Content */}

@@ -22,7 +22,10 @@ class ProjectService(IProjectService):
     
     async def get_project_by_id(self, project_id: int, user_id: int = None) -> Optional[GetProjectResponse]:
         """Get project by ID with access information"""
+        logger.info(f"🔍 DEBUG: get_project_by_id called with project_id={project_id}, user_id={user_id}")
         project = await self.project_repository.find_by_id(project_id)
+        logger.info(f"🔍 DEBUG: Project found: {project is not None}")
+        
         if project:
             # Check access for this specific project
             has_access = False
@@ -30,12 +33,16 @@ class ProjectService(IProjectService):
                 try:
                     from services.authorization_service import AuthorizationService
                     auth_service = AuthorizationService(self.tenant_slug)
+                    logger.info(f"🔍 DEBUG: Checking access for user {user_id} to project {project_id}")
                     has_access = await auth_service.user_has_project_content_access(user_id, project_id)
+                    logger.info(f"🔍 DEBUG: Authorization service returned has_access: {has_access}")
                 except Exception as e:
-                    logger.error(f"Error checking access for user {user_id} to project {project_id}: {e}")
+                    logger.error(f"🔍 DEBUG: Error checking access for user {user_id} to project {project_id}: {e}")
                     has_access = False
             
-            return ProjectConverter.to_get_response(project, user_id, has_access)
+            result = ProjectConverter.to_get_response(project, user_id, has_access)
+            logger.info(f"🔍 DEBUG: Final result can_access: {result.can_access}")
+            return result
         return None
     
     async def get_project_by_name(self, name: str) -> Optional[GetProjectResponse]:
@@ -195,12 +202,24 @@ class ProjectService(IProjectService):
     async def get_projects_for_user_group(self, user_group_id: int) -> List[GetProjectResponse]:
         """Get all projects that a user group has access to"""
         projects = await self.project_repository.get_projects_for_user_group(user_group_id)
-        return ProjectConverter.to_get_response_list(projects)
+        return await ProjectConverter.to_get_response_list(projects)
     
     async def get_projects_for_user(self, user_id: int) -> List[GetProjectResponse]:
         """Get all projects that a user has access to through their user groups"""
+        logger.info(f"🔍 DEBUG: get_projects_for_user called for user_id={user_id}")
         projects = await self.project_repository.get_projects_for_user(user_id)
-        return ProjectConverter.to_get_response_list(projects)
+        logger.info(f"🔍 DEBUG: Raw projects from repository: {len(projects)} projects")
+        
+        # Since these projects are pre-filtered to only include accessible projects,
+        # we should set has_access=True for all of them
+        responses = []
+        for project in projects:
+            response = ProjectConverter.to_get_response(project, user_id, has_access=True)
+            responses.append(response)
+            logger.info(f"🔍 DEBUG: Project {project.id} ({project.name}): can_access={response.can_access}")
+        
+        logger.info(f"🔍 DEBUG: Converted DTOs: {len(responses)} projects")
+        return responses
     
     async def get_user_groups_not_in_project(self, project_id: int, search_term: Optional[str] = None) -> List[GetUserGroupResponse]:
         """Get all user groups that are NOT assigned to a specific project, optionally filtered by search term"""

@@ -162,8 +162,12 @@ class ProjectController:
                 logger.info(f"Admin/PM access: Found {len(project_dtos)} total projects for user {user_id}")
             else:
                 # Regular users (viewers/analysts) see only projects they have access to
+                logger.info(f"🔍 DEBUG: Getting projects for regular user {user_id}")
                 project_dtos = await project_service.get_projects_for_user(user_id)
-                logger.info(f"Regular user access: Found {len(project_dtos)} projects for user {user_id}")
+                logger.info(f"🔍 DEBUG: Regular user access: Found {len(project_dtos)} projects for user {user_id}")
+                logger.info(f"🔍 DEBUG: Project DTOs: {project_dtos}")
+                for i, dto in enumerate(project_dtos):
+                    logger.info(f"🔍 DEBUG: Project {i+1}: id={dto.id}, name={dto.name}, can_access={dto.can_access}")
             
             return project_dtos
             
@@ -182,24 +186,34 @@ class ProjectController:
             user_id = int(user_claims.provider_claims.get('database_id', 0))
             tenant_slug = user_claims.tenant_slug
             
-            logger.info(f"Getting project {project_id} for user {user_id} in tenant {tenant_slug}")
+            logger.info(f"🔍 DEBUG: Getting project {project_id} for user {user_id} in tenant {tenant_slug}")
+            logger.info(f"🔍 DEBUG: User claims: {user_claims}")
             
             # Create tenant-aware security orchestrator
             security_orchestrator = self.service_factory.create_security_orchestrator(tenant_slug)
             
             # Check authorization - user must have strict content access to this project
-            if not await security_orchestrator.require_permission(user_id, "project:content", project_id=project_id):
+            logger.info(f"🔍 DEBUG: Checking project content access for user {user_id} to project {project_id}")
+            has_access = await security_orchestrator.require_permission(user_id, "project:content", project_id=project_id)
+            logger.info(f"🔍 DEBUG: Security orchestrator returned access: {has_access}")
+            
+            if not has_access:
+                logger.warning(f"🔍 DEBUG: Access denied for user {user_id} to project {project_id}")
                 raise HTTPException(status_code=403, detail="Access denied to this project")
             
             # Get project service from factory
             project_service = self.service_factory.create_project_service(tenant_slug)
             
             # Get the project with access information
+            logger.info(f"🔍 DEBUG: Fetching project details for project {project_id}")
             project_dto = await project_service.get_project_by_id(project_id, user_id)
             
             if not project_dto:
+                logger.warning(f"🔍 DEBUG: Project {project_id} not found")
                 raise HTTPException(status_code=404, detail="Project not found")
             
+            logger.info(f"🔍 DEBUG: Project DTO returned: {project_dto}")
+            logger.info(f"🔍 DEBUG: Project can_access field: {project_dto.can_access}")
             logger.info(f"Successfully retrieved project {project_id}")
             return project_dto
             

@@ -42,21 +42,27 @@ class AuthorizationService(IAuthorizationService):
     async def user_has_project_content_access(self, user_id: int, project_id: int) -> bool:
         """Check if user has access to project content (documents, etc.) through group membership only"""
         try:
+            logger.info(f"🔍 DEBUG: user_has_project_content_access called for user {user_id}, project {project_id}")
+            
             # Import here to avoid circular imports
             from services.project_service import ProjectService
             
             # Only check group-based access - no role bypass for content
             project_service = ProjectService(self.tenant_slug)
+            logger.info(f"🔍 DEBUG: Getting projects for user {user_id}")
             user_projects = await project_service.get_projects_for_user(user_id)
+            logger.info(f"🔍 DEBUG: User projects returned: {len(user_projects)} projects")
+            logger.info(f"🔍 DEBUG: User project IDs: {[p.id for p in user_projects]}")
             
             # Check if project is in user's project list (based on group membership)
             has_access = any(project.id == project_id for project in user_projects)
+            logger.info(f"🔍 DEBUG: Project {project_id} in user projects: {has_access}")
             
             logger.info(f"User {user_id} project content access check for project {project_id}: {has_access}")
             return has_access
             
         except Exception as e:
-            logger.error(f"Error checking project content access for user {user_id}: {e}")
+            logger.error(f"🔍 DEBUG: Error checking project content access for user {user_id}: {e}")
             return False
 
     async def user_has_document_access(self, user_id: int, document_id: int, document_service) -> bool:

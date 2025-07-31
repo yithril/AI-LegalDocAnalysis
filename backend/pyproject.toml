@@ -41,6 +41,11 @@ fastapi-nextauth-jwt = "^2.1.1"
 pytest = ">=8.2"
 pytest-asyncio = "^1.1.0"
 
+[tool.poetry.scripts]
+start = "uvicorn main:app --reload --host 0.0.0.0 --port 8000"
+dev = "uvicorn main:app --reload --host 0.0.0.0 --port 8000"
+api = "uvicorn main:app --reload --host 0.0.0.0 --port 8000"
+
 [tool.pytest.ini_options]
 filterwarnings = [
     "ignore::pydantic.warnings.PydanticDeprecatedSince20",

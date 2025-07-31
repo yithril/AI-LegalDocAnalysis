@@ -135,21 +135,25 @@ class ProjectRepository:
     
     async def get_projects_for_user(self, user_id: int) -> List[Project]:
         """Get all projects that a user has access to through their user groups"""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        logger.info(f"🔍 DEBUG: get_projects_for_user called for user_id={user_id} in tenant={self.tenant_slug}")
+        
         async for session in database_provider.get_tenant_session(self.tenant_slug):
             # This is a more complex query that joins through user groups
             # User -> UserUserGroup -> UserGroup -> ProjectUserGroup -> Project
-            result = await session.execute(
-                select(Project)
-                .join(ProjectUserGroup, Project.id == ProjectUserGroup.project_id)
-                .join(UserGroup, ProjectUserGroup.user_group_id == UserGroup.id)
-                .join(UserUserGroup, UserGroup.id == UserUserGroup.user_group_id)
-                .where(
-                    UserUserGroup.user_id == user_id,
-                    Project.is_active == True,
-                    UserGroup.is_active == True
-                )
-            )
-            return result.scalars().all()
+            query = select(Project).join(ProjectUserGroup, Project.id == ProjectUserGroup.project_id).join(UserGroup, ProjectUserGroup.user_group_id == UserGroup.id).join(UserUserGroup, UserGroup.id == UserUserGroup.user_group_id).where(UserUserGroup.user_id == user_id, Project.is_active == True, UserGroup.is_active == True)
+            
+            logger.info(f"🔍 DEBUG: Executing query for user {user_id}")
+            result = await session.execute(query)
+            projects = result.scalars().all()
+            
+            logger.info(f"🔍 DEBUG: Found {len(projects)} projects for user {user_id}")
+            logger.info(f"🔍 DEBUG: Project IDs: {[p.id for p in projects]}")
+            logger.info(f"🔍 DEBUG: Project names: {[p.name for p in projects]}")
+            
+            return projects
     
     async def get_user_groups_not_in_project(self, project_id: int, search_term: Optional[str] = None) -> List[UserGroup]:
         """Get all user groups that are NOT assigned to a specific project, optionally filtered by search term"""

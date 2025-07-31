@@ -294,7 +294,7 @@ class DocumentController:
             document_service = self.service_factory.create_document_service(tenant_slug)
             
             # Get documents ready for review (service now returns DTOs directly)
-            document_dtos = await document_service.get_documents_ready_for_review(project_id, user_id)
+            document_dtos = await document_service.get_documents_ready_for_review(project_id)
             
             logger.info(f"Successfully retrieved {len(document_dtos)} documents ready for review for project {project_id}")
             return document_dtos

@@ -170,8 +170,9 @@ class DocumentService(IDocumentService):
         try:
             logger.info(f"Getting documents ready for review for project: {project_id}")
             
-            # Get documents with status "ready_for_review" for the project
-            documents = await self.document_repository.find_by_status_and_project("ready_for_review", project_id)
+            # Get documents with status "HUMAN_REVIEW_PENDING" for the project
+            from models.tenant.document import DocumentStatus
+            documents = await self.document_repository.find_by_status_and_project(DocumentStatus.HUMAN_REVIEW_PENDING.value, project_id)
             
             logger.info(f"Found {len(documents)} documents ready for review")
             return DocumentConverter.to_get_response_list(documents)

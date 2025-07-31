@@ -13,23 +13,15 @@ interface DocumentUploadProps {
   onUploadError?: (error: string) => void;
 }
 
-// Backend supported file types
+// Backend supported file types (can extract text from these)
 const ALLOWED_FILE_TYPES = {
   'application/pdf': ['.pdf'],
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
-  'application/msword': ['.doc'],
-  'text/plain': ['.txt'],
-  'application/rtf': ['.rtf'],
-  'image/jpeg': ['.jpg', '.jpeg'],
-  'image/png': ['.png'],
-  'image/gif': ['.gif'],
-  'image/bmp': ['.bmp'],
-  'image/tiff': ['.tiff'],
-  'image/webp': ['.webp'],
-  'application/zip': ['.zip'],
-  'application/vnd.rar': ['.rar'],
-  'application/x-tar': ['.tar'],
-  'application/gzip': ['.gz']
+  'text/plain': ['.txt', '.md'],
+  'text/csv': ['.csv'],
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
+  'application/vnd.ms-excel': ['.xls'],
+  'application/rtf': ['.rtf']
 };
 
 const ALLOWED_EXTENSIONS = Object.values(ALLOWED_FILE_TYPES).flat();
@@ -177,7 +169,7 @@ export default function DocumentUpload({ projectId, onUploadSuccess, onUploadErr
                   Drag & drop a file here, or click to select
                 </p>
                 <p className="text-sm text-gray-500">
-                  Supported formats: PDF, DOCX, DOC, TXT, RTF, Images, Archives
+                  Supported formats: PDF, DOCX, TXT, CSV, Excel, RTF, Markdown
                 </p>
                 <p className="text-sm text-gray-500">
                   Maximum size: 50MB
@@ -203,14 +195,14 @@ export default function DocumentUpload({ projectId, onUploadSuccess, onUploadErr
 
       {/* File Type Info */}
       <div className="text-xs text-gray-500">
-        <p className="font-medium mb-1">Supported file types:</p>
+        <p className="font-medium mb-1">Supported file types (text extraction):</p>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-1">
           <span>• PDF (.pdf)</span>
-          <span>• Word (.docx, .doc)</span>
-          <span>• Text (.txt)</span>
+          <span>• Word (.docx)</span>
+          <span>• Text (.txt, .md)</span>
+          <span>• CSV (.csv)</span>
+          <span>• Excel (.xlsx, .xls)</span>
           <span>• RTF (.rtf)</span>
-          <span>• Images (.jpg, .png, .gif, .bmp, .tiff, .webp)</span>
-          <span>• Archives (.zip, .rar, .tar, .gz)</span>
         </div>
       </div>
     </div>
